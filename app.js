@@ -1,565 +1,159 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 /* =========================================================
-   KETURIO CONFIG
-========================================================= */
+   KETURIO
+   Main application JavaScript
+   ========================================================= */
 
-const cfg = window.KETURIO_CONFIG;
+const CONFIG = window.KETURIO_CONFIG;
 
 const SITE_URL =
   "https://samdiok.github.io/keturio/";
 
 const supabase = createClient(
-  cfg.SUPABASE_URL,
-  cfg.SUPABASE_PUBLISHABLE_KEY
+  CONFIG.SUPABASE_URL,
+  CONFIG.SUPABASE_PUBLISHABLE_KEY
 );
 
 
 /* =========================================================
-   HELPERS
-========================================================= */
+   DOM HELPERS
+   ========================================================= */
 
 const $ = (selector) =>
   document.querySelector(selector);
 
 
 /* =========================================================
-   STATE
-========================================================= */
+   AUTH ELEMENTS
+   ========================================================= */
+
+const authScreen = $("#authScreen");
+const chatApp = $("#chatApp");
+
+const authForm = $("#authForm");
+const authMessage = $("#authMessage");
+
+const loginTab = $("#loginTab");
+const signupTab = $("#signupTab");
+
+const nameField = $("#nameField");
+const displayName = $("#displayName");
+
+const email = $("#email");
+const password = $("#password");
+
+const authSubmit = $("#authSubmit");
+const resendConfirm = $("#resendConfirm");
+
+
+/* =========================================================
+   CHAT ELEMENTS
+   ========================================================= */
+
+const chatList = $("#chatList");
+const chatWall = $("#chatWall");
+
+const messageInput = $("#messageInput");
+const composer = $("#composer");
+
+const searchInput = $("#searchInput");
+const newChatBtn = $("#newChatBtn");
+
+const personName = $("#personName");
+const personAvatar = $("#personAvatar");
+const presence = $("#presence");
+
+const backBtn = $("#backBtn");
+
+const myName = $("#myName");
+const myEmail = $("#myEmail");
+const myAvatar = $("#myAvatar");
+
+const logoutBtn = $("#logoutBtn");
+const themeBtn = $("#themeBtn");
+const emojiBtn = $("#emojiBtn");
+
+const toast = $("#toast");
+
+
+/* =========================================================
+   APPLICATION STATE
+   ========================================================= */
+
+let authMode = "login";
 
 let me = null;
 
 let currentChat = null;
-
 let currentConversation = null;
 
 let messageChannel = null;
-
 let typingChannel = null;
 
 let typingStopTimer = null;
-
 let remoteTypingTimer = null;
 
 let lastTypingState = false;
 
-
-/* =========================================================
-   DIAGNOSTIC STATE
-========================================================= */
-
-const diagnostic = {
-
-  messageStatus:
-    "NOT STARTED",
-
-  typingStatus:
-    "NOT STARTED",
-
-  lastMessageEvent:
-    "NONE",
-
-  lastTypingEvent:
-    "NONE",
-
-  lastError:
-    "NONE",
-
-  messageInsert:
-    "NONE",
-
-  conversation:
-    "NONE"
-
-};
+let searchTimer = null;
 
 
 /* =========================================================
-   DIAGNOSTIC PANEL
-========================================================= */
+   NOTIFICATIONS
+   ========================================================= */
 
-function createDiagnosticPanel() {
+function notify(message, isError = false) {
 
-  if (
-    document.getElementById(
-      "keturioDiagnostic"
-    )
-  ) {
-
-    return;
-
-  }
-
-
-  const panel =
-    document.createElement(
-      "div"
-    );
-
-
-  panel.id =
-    "keturioDiagnostic";
-
-
-  panel.style.cssText = `
-    position:fixed;
-    left:10px;
-    right:10px;
-    bottom:10px;
-    z-index:99999;
-    background:#080b12;
-    color:#dce7ff;
-    border:1px solid rgba(120,160,255,.35);
-    border-radius:14px;
-    padding:12px;
-    font-family:monospace;
-    font-size:11px;
-    line-height:1.55;
-    box-shadow:0 10px 35px rgba(0,0,0,.45);
-    max-height:230px;
-    overflow:auto;
-  `;
-
-
-  panel.innerHTML = `
-
-    <div style="
-      display:flex;
-      justify-content:space-between;
-      align-items:center;
-      margin-bottom:7px;
-    ">
-
-      <strong style="
-        color:#ffffff;
-        font-size:12px;
-      ">
-        KETURIO REALTIME DIAGNOSTIC
-      </strong>
-
-      <button
-        id="closeDiagnostic"
-        style="
-          background:none;
-          border:0;
-          color:#aaa;
-          font-size:18px;
-        "
-      >
-        ×
-      </button>
-
-    </div>
-
-    <div id="diagContent">
-      Starting diagnostic…
-    </div>
-
-  `;
-
-
-  document.body.appendChild(
-    panel
-  );
-
-
-  const close =
-    document.getElementById(
-      "closeDiagnostic"
-    );
-
-
-  if (close) {
-
-    close.onclick =
-      () => {
-
-        panel.style.display =
-          "none";
-
-      };
-
-  }
-
-
-  updateDiagnostic();
-
-}
-
-
-/* =========================================================
-   UPDATE DIAGNOSTIC
-========================================================= */
-
-function updateDiagnostic() {
-
-  const content =
-    document.getElementById(
-      "diagContent"
-    );
-
-
-  if (!content) {
+  if (!toast) {
     return;
   }
 
+  toast.textContent = message;
 
-  const colour =
-    (value) => {
+  toast.classList.add("show");
 
-      const v =
-        String(
-          value
-        ).toUpperCase();
+  toast.style.borderColor =
+    isError
+      ? "rgba(255,113,133,.4)"
+      : "";
 
-
-      if (
-        v.includes("CONNECTED") ||
-        v.includes("RECEIVED") ||
-        v === "SUCCESS"
-      ) {
-
-        return "#6dff9a";
-
-      }
-
-
-      if (
-        v.includes("ERROR") ||
-        v.includes("FAILED") ||
-        v.includes("TIMEOUT")
-      ) {
-
-        return "#ff7185";
-
-      }
-
-
-      if (
-        v.includes("WAITING") ||
-        v.includes("NOT STARTED")
-      ) {
-
-        return "#ffd166";
-
-      }
-
-
-      return "#9db7ff";
-
-    };
-
-
-  content.innerHTML = `
-
-    <div>
-      Conversation:
-      <span style="color:#fff">
-        ${
-          diagnostic.conversation
-          || "NONE"
-        }
-      </span>
-    </div>
-
-    <div>
-      User:
-      <span style="color:#fff">
-        ${
-          me?.id
-          || "NOT LOGGED IN"
-        }
-      </span>
-    </div>
-
-    <div>
-      Message channel:
-      <span style="color:${colour(
-        diagnostic.messageStatus
-      )}">
-        ${
-          diagnostic.messageStatus
-        }
-      </span>
-    </div>
-
-    <div>
-      Typing channel:
-      <span style="color:${colour(
-        diagnostic.typingStatus
-      )}">
-        ${
-          diagnostic.typingStatus
-        }
-      </span>
-    </div>
-
-    <div>
-      Last message event:
-      <span style="color:#fff">
-        ${
-          diagnostic.lastMessageEvent
-        }
-      </span>
-    </div>
-
-    <div>
-      Last typing event:
-      <span style="color:#fff">
-        ${
-          diagnostic.lastTypingEvent
-        }
-      </span>
-    </div>
-
-    <div>
-      Message insert:
-      <span style="color:${colour(
-        diagnostic.messageInsert
-      )}">
-        ${
-          diagnostic.messageInsert
-        }
-      </span>
-    </div>
-
-    <div>
-      Last error:
-      <span style="color:#ffb3bd">
-        ${
-          diagnostic.lastError
-        }
-      </span>
-    </div>
-
-    <div style="
-      margin-top:8px;
-      color:#8d9bb8;
-    ">
-      Type a message and watch this panel.
-      Then check the OTHER phone/account.
-    </div>
-
-  `;
-
-}
-
-
-/* =========================================================
-   DIAGNOSTIC EVENT
-========================================================= */
-
-function diagnosticLog(
-  type,
-  value
-) {
-
-  console.log(
-    "[KETURIO DIAGNOSTIC]",
-    type,
-    value
+  window.clearTimeout(
+    notify.timer
   );
 
-
-  if (
-    type ===
-    "messageStatus"
-  ) {
-
-    diagnostic.messageStatus =
-      value;
-
-  }
-
-
-  if (
-    type ===
-    "typingStatus"
-  ) {
-
-    diagnostic.typingStatus =
-      value;
-
-  }
-
-
-  if (
-    type ===
-    "messageEvent"
-  ) {
-
-    diagnostic.lastMessageEvent =
-      value;
-
-  }
-
-
-  if (
-    type ===
-    "typingEvent"
-  ) {
-
-    diagnostic.lastTypingEvent =
-      value;
-
-  }
-
-
-  if (
-    type ===
-    "error"
-  ) {
-
-    diagnostic.lastError =
-      value;
-
-  }
-
-
-  if (
-    type ===
-    "insert"
-  ) {
-
-    diagnostic.messageInsert =
-      value;
-
-  }
-
-
-  updateDiagnostic();
-
-}
-
-
-/* =========================================================
-   NOTIFICATION
-========================================================= */
-
-const toast =
-  $("#toast");
-
-
-function notify(
-  message,
-  error = false
-) {
-
-  if (toast) {
-
-    toast.textContent =
-      message;
-
-    toast.classList.add(
-      "show"
-    );
-
-
-    if (error) {
-
-      toast.style.borderColor =
-        "rgba(255,113,133,.4)";
-
-    }
-
-
-    setTimeout(
+  notify.timer =
+    window.setTimeout(
       () => {
-
-        toast.classList.remove(
-          "show"
-        );
-
+        toast.classList.remove("show");
       },
-      2800
+      2600
     );
-
-  }
-
-
-  console.log(
-    "[KETURIO]",
-    message
-  );
-
 }
-
-
-/* =========================================================
-   AUTH ELEMENTS
-========================================================= */
-
-const authScreen =
-  $("#authScreen");
-
-const chatApp =
-  $("#chatApp");
-
-const authForm =
-  $("#authForm");
-
-const authMessage =
-  $("#authMessage");
-
-const nameField =
-  $("#nameField");
-
-const displayName =
-  $("#displayName");
-
-const email =
-  $("#email");
-
-const password =
-  $("#password");
-
-const authSubmit =
-  $("#authSubmit");
-
-const resendConfirm =
-  $("#resendConfirm");
-
-
-let mode =
-  "login";
 
 
 /* =========================================================
    AUTH MODE
-========================================================= */
+   ========================================================= */
 
-function setAuthMode(
-  next
-) {
+function setAuthMode(mode) {
 
-  mode =
-    next;
-
-
-  const loginTab =
-    $("#loginTab");
-
-  const signupTab =
-    $("#signupTab");
-
+  authMode = mode;
 
   loginTab?.classList.toggle(
     "active",
     mode === "login"
   );
 
-
   signupTab?.classList.toggle(
     "active",
     mode === "signup"
   );
 
-
   nameField?.classList.toggle(
     "hidden",
     mode !== "signup"
   );
-
 
   if (authSubmit) {
 
@@ -567,281 +161,55 @@ function setAuthMode(
       mode === "login"
         ? "Login"
         : "Create account";
-
   }
-
 
   if (authMessage) {
 
-    authMessage.textContent =
-      "";
+    authMessage.textContent = "";
 
     authMessage.classList.remove(
       "error"
     );
-
   }
-
 
   resendConfirm?.classList.add(
     "hidden"
   );
-
 }
 
 
-$("#loginTab")?.addEventListener(
+loginTab?.addEventListener(
   "click",
-  () =>
-    setAuthMode("login")
+  () => setAuthMode("login")
 );
 
 
-$("#signupTab")?.addEventListener(
+signupTab?.addEventListener(
   "click",
-  () =>
-    setAuthMode("signup")
-);
-
-
-/* =========================================================
-   SHOW RESEND
-========================================================= */
-
-function showResend(
-  address
-) {
-
-  if (!resendConfirm) {
-    return;
-  }
-
-
-  resendConfirm.classList.remove(
-    "hidden"
-  );
-
-
-  resendConfirm.dataset.email =
-    address ||
-    email?.value?.trim() ||
-    "";
-
-}
-
-
-/* =========================================================
-   AUTH FORM
-========================================================= */
-
-authForm?.addEventListener(
-  "submit",
-  async (e) => {
-
-    e.preventDefault();
-
-
-    authSubmit &&
-      (
-        authSubmit.disabled =
-          true
-      );
-
-
-    if (authMessage) {
-
-      authMessage.textContent =
-        "Working…";
-
-      authMessage.classList.remove(
-        "error"
-      );
-
-    }
-
-
-    try {
-
-      /* =========================================
-         SIGNUP
-      ========================================= */
-
-      if (
-        mode ===
-        "signup"
-      ) {
-
-        const address =
-          email.value.trim();
-
-
-        const {
-          data,
-          error
-        } =
-          await supabase.auth.signUp({
-
-            email:
-              address,
-
-            password:
-              password.value,
-
-            options: {
-
-              data: {
-
-                display_name:
-                  displayName.value.trim() ||
-                  "Keturio User"
-
-              },
-
-              emailRedirectTo:
-                SITE_URL
-
-            }
-
-          });
-
-
-        if (error) {
-          throw error;
-        }
-
-
-        if (!data.session) {
-
-          if (authMessage) {
-
-            authMessage.textContent =
-              "Account created. Check your email and confirm your account.";
-
-          }
-
-
-          showResend(
-            address
-          );
-
-        }
-
-        else {
-
-          await boot(
-            data.user
-          );
-
-        }
-
-      }
-
-
-      /* =========================================
-         LOGIN
-      ========================================= */
-
-      else {
-
-        const {
-          data,
-          error
-        } =
-          await supabase.auth
-            .signInWithPassword({
-
-              email:
-                email.value.trim(),
-
-              password:
-                password.value
-
-            });
-
-
-        if (error) {
-          throw error;
-        }
-
-
-        await boot(
-          data.user
-        );
-
-      }
-
-    }
-
-    catch (err) {
-
-      console.error(
-        "Auth error:",
-        err
-      );
-
-
-      diagnosticLog(
-        "error",
-        err?.message ||
-        "Authentication error"
-      );
-
-
-      if (authMessage) {
-
-        authMessage.textContent =
-          err?.message ||
-          "Authentication failed.";
-
-        authMessage.classList.add(
-          "error"
-        );
-
-      }
-
-
-      const message =
-        String(
-          err?.message ||
-          ""
-        ).toLowerCase();
-
-
-      if (
-        message.includes(
-          "confirm"
-        ) ||
-        message.includes(
-          "email"
-        )
-      ) {
-
-        showResend(
-          email?.value?.trim()
-        );
-
-      }
-
-    }
-
-    finally {
-
-      if (authSubmit) {
-
-        authSubmit.disabled =
-          false;
-
-      }
-
-    }
-
-  }
+  () => setAuthMode("signup")
 );
 
 
 /* =========================================================
    RESEND CONFIRMATION
-========================================================= */
+   ========================================================= */
+
+function showResend(address) {
+
+  if (!resendConfirm) {
+    return;
+  }
+
+  resendConfirm.classList.remove(
+    "hidden"
+  );
+
+  resendConfirm.dataset.email =
+    address ||
+    email?.value?.trim() ||
+    "";
+}
+
 
 resendConfirm?.addEventListener(
   "click",
@@ -854,137 +222,350 @@ resendConfirm?.addEventListener(
         ""
       ).trim();
 
-
     if (!address) {
 
       notify(
-        "Enter your email first.",
+        "Enter your email address first.",
         true
       );
 
       return;
-
     }
 
-
-    resendConfirm.disabled =
-      true;
-
+    resendConfirm.disabled = true;
 
     try {
 
-      const {
-        error
-      } =
+      const { error } =
         await supabase.auth.resend({
-
-          type:
-            "signup",
-
-          email:
-            address,
-
+          type: "signup",
+          email: address,
           options: {
-
-            emailRedirectTo:
-              SITE_URL
-
+            emailRedirectTo: SITE_URL
           }
-
         });
-
 
       if (error) {
         throw error;
       }
 
+      if (authMessage) {
 
-      authMessage &&
-        (
-          authMessage.textContent =
-            "New confirmation email sent."
+        authMessage.textContent =
+          "A new confirmation email has been sent.";
+
+        authMessage.classList.remove(
+          "error"
         );
-
+      }
 
       notify(
         "Confirmation email sent."
       );
 
-    }
+    } catch (error) {
 
-    catch (err) {
+      if (authMessage) {
 
-      diagnosticLog(
-        "error",
-        err?.message
-      );
+        authMessage.textContent =
+          error?.message ||
+          "Could not resend confirmation email.";
 
-
-      authMessage &&
-        (
-          authMessage.textContent =
-            err?.message ||
-            "Could not resend email."
+        authMessage.classList.add(
+          "error"
         );
+      }
 
+    } finally {
+
+      resendConfirm.disabled = false;
     }
-
-    finally {
-
-      resendConfirm.disabled =
-        false;
-
-    }
-
   }
 );
 
 
 /* =========================================================
-   BOOT
-========================================================= */
+   LOGIN / SIGNUP
+   ========================================================= */
 
-async function boot(
-  user
-) {
+authForm?.addEventListener(
+  "submit",
+  async (event) => {
+
+    event.preventDefault();
+
+    if (authSubmit) {
+      authSubmit.disabled = true;
+    }
+
+    if (authMessage) {
+
+      authMessage.textContent =
+        "Working…";
+
+      authMessage.classList.remove(
+        "error"
+      );
+    }
+
+    resendConfirm?.classList.add(
+      "hidden"
+    );
+
+    try {
+
+      /* -----------------------------------------
+         SIGN UP
+      ----------------------------------------- */
+
+      if (authMode === "signup") {
+
+        const address =
+          email.value.trim();
+
+        const name =
+          displayName?.value?.trim() ||
+          "Keturio User";
+
+        const {
+          data,
+          error
+        } =
+          await supabase.auth.signUp({
+
+            email: address,
+
+            password:
+              password.value,
+
+            options: {
+
+              data: {
+                display_name: name
+              },
+
+              emailRedirectTo:
+                SITE_URL
+            }
+          });
+
+        if (error) {
+          throw error;
+        }
+
+        /*
+          When email confirmation is enabled,
+          Supabase returns no session yet.
+        */
+
+        if (!data.session) {
+
+          if (authMessage) {
+
+            authMessage.textContent =
+              "Account created. Check your email, confirm it, then log in.";
+
+            authMessage.classList.remove(
+              "error"
+            );
+          }
+
+          showResend(address);
+
+          notify(
+            "Check your email."
+          );
+
+          return;
+        }
+
+        await boot(
+          data.user
+        );
+
+        return;
+      }
+
+
+      /* -----------------------------------------
+         LOGIN
+      ----------------------------------------- */
+
+      const {
+        data,
+        error
+      } =
+        await supabase.auth.signInWithPassword({
+
+          email:
+            email.value.trim(),
+
+          password:
+            password.value
+        });
+
+      if (error) {
+        throw error;
+      }
+
+      await boot(
+        data.user
+      );
+
+    } catch (error) {
+
+      const message =
+        error?.message ||
+        "Authentication failed.";
+
+      if (authMessage) {
+
+        authMessage.textContent =
+          message;
+
+        authMessage.classList.add(
+          "error"
+        );
+      }
+
+      const lower =
+        message.toLowerCase();
+
+      if (
+        lower.includes("confirm") ||
+        lower.includes("email")
+      ) {
+
+        showResend(
+          email?.value?.trim()
+        );
+      }
+
+    } finally {
+
+      if (authSubmit) {
+        authSubmit.disabled = false;
+      }
+    }
+  }
+);
+
+
+/* =========================================================
+   APPLICATION BOOT
+   ========================================================= */
+
+async function boot(user) {
 
   if (!user) {
     return;
   }
 
-
-  me =
-    user;
-
-
-  createDiagnosticPanel();
-
+  me = user;
 
   authScreen?.classList.add(
     "hidden"
   );
 
-
   chatApp?.classList.remove(
     "hidden"
   );
 
-
   await loadMyProfile();
 
-  await renderPeople("");
-
+  await renderPeople(
+    searchInput?.value || ""
+  );
 }
 
 
 /* =========================================================
+   LOAD CURRENT SESSION
+   ========================================================= */
+
+async function restoreSession() {
+
+  try {
+
+    const {
+      data,
+      error
+    } =
+      await supabase.auth.getSession();
+
+    if (error) {
+      throw error;
+    }
+
+    if (data?.session?.user) {
+
+      await boot(
+        data.session.user
+      );
+    }
+
+  } catch (error) {
+
+    console.error(
+      "Keturio session error:",
+      error
+    );
+  }
+}
+
+
+/* =========================================================
+   AUTH STATE LISTENER
+   ========================================================= */
+
+supabase.auth.onAuthStateChange(
+  async (event, session) => {
+
+    if (
+      event === "SIGNED_IN" &&
+      session?.user
+    ) {
+
+      await boot(
+        session.user
+      );
+    }
+
+    if (
+      event === "SIGNED_OUT"
+    ) {
+
+      await cleanupRealtime();
+
+      me = null;
+      currentChat = null;
+      currentConversation = null;
+
+      chatApp?.classList.add(
+        "hidden"
+      );
+
+      authScreen?.classList.remove(
+        "hidden"
+      );
+    }
+  }
+);
+
+
+/* =========================================================
    PROFILE
-========================================================= */
+   ========================================================= */
 
 async function loadMyProfile() {
 
+  if (!me) {
+    return;
+  }
+
   const {
-    data
+    data,
+    error
   } =
     await supabase
       .from("profiles")
@@ -997,56 +578,63 @@ async function loadMyProfile() {
       )
       .maybeSingle();
 
+  if (error) {
+
+    console.warn(
+      "Profile load:",
+      error.message
+    );
+  }
 
   const name =
     data?.display_name ||
     me.user_metadata?.display_name ||
     "Keturio User";
 
-
-  const myName =
-    $("#myName");
-
   if (myName) {
-
-    myName.textContent =
-      name;
-
+    myName.textContent = name;
   }
-
-
-  const myEmail =
-    $("#myEmail");
 
   if (myEmail) {
-
     myEmail.textContent =
       me.email || "";
-
   }
-
-
-  const myAvatar =
-    $("#myAvatar");
 
   if (myAvatar) {
-
     myAvatar.textContent =
-      name[0]?.toUpperCase() ||
-      "K";
-
+      name.charAt(0).toUpperCase();
   }
 
+  /*
+    Update last_seen without blocking
+    the application.
+  */
+
+  supabase
+    .from("profiles")
+    .update({
+      last_seen:
+        new Date().toISOString()
+    })
+    .eq(
+      "id",
+      me.id
+    )
+    .then(() => {});
 }
 
 
 /* =========================================================
-   PEOPLE
-========================================================= */
+   PEOPLE SEARCH
+   ========================================================= */
 
 async function renderPeople(
   filter = ""
 ) {
+
+  if (!me || !chatList) {
+    return;
+  }
 
   let query =
     supabase
@@ -1059,38 +647,35 @@ async function renderPeople(
         me.id
       )
       .order(
-        "display_name"
+        "display_name",
+        {
+          ascending: true
+        }
       )
       .limit(50);
 
+  const term =
+    filter.trim();
 
-  if (
-    filter.trim()
-  ) {
+  if (term) {
 
-    const term =
-      filter
-        .trim()
-        .replaceAll(
-          ",",
-          ""
-        );
-
+    const safeTerm =
+      term
+        .replaceAll(",", "")
+        .replaceAll("(", "")
+        .replaceAll(")", "");
 
     query =
       query.or(
-        `display_name.ilike.%${term}%,username.ilike.%${term}%`
+        `display_name.ilike.%${safeTerm}%,username.ilike.%${safeTerm}%`
       );
-
   }
-
 
   const {
     data,
     error
   } =
     await query;
-
 
   if (error) {
 
@@ -1100,18 +685,9 @@ async function renderPeople(
     );
 
     return;
-
   }
 
-
-  if (!chatList) {
-    return;
-  }
-
-
-  chatList.innerHTML =
-    "";
-
+  chatList.innerHTML = "";
 
   if (!data?.length) {
 
@@ -1119,7 +695,6 @@ async function renderPeople(
       document.createElement(
         "div"
       );
-
 
     empty.style.cssText =
       `
@@ -1129,249 +704,250 @@ async function renderPeople(
         text-align:center;
       `;
 
-
     empty.textContent =
-      "No other Keturio users found.";
-
+      term
+        ? "No Keturio users found."
+        : "No other Keturio users yet.";
 
     chatList.appendChild(
       empty
     );
 
-
     return;
-
   }
 
+  for (const person of data) {
 
-  data.forEach(
-    person => {
+    const button =
+      document.createElement(
+        "button"
+      );
 
-      const button =
-        document.createElement(
-          "button"
-        );
+    button.type = "button";
 
+    button.className =
+      "chat-item";
 
-      button.type =
-        "button";
+    const avatar =
+      document.createElement(
+        "div"
+      );
 
-      button.className =
-        "chat-item";
+    avatar.className =
+      "avatar gradient";
 
-
-      const avatar =
-        document.createElement(
-          "div"
-        );
-
-
-      avatar.className =
-        "avatar gradient";
-
-
-      avatar.textContent =
-        (
-          person.display_name ||
-          "K"
-        )[0].toUpperCase();
-
-
-      const meta =
-        document.createElement(
-          "div"
-        );
-
-
-      meta.className =
-        "chat-meta";
-
-
-      const name =
-        document.createElement(
-          "strong"
-        );
-
-
-      name.textContent =
+    avatar.textContent =
+      (
         person.display_name ||
-        "Keturio User";
+        "K"
+      )
+        .charAt(0)
+        .toUpperCase();
 
-
-      const username =
-        document.createElement(
-          "span"
-        );
-
-
-      username.textContent =
-        person.username
-          ? `@${person.username}`
-          : "Start conversation";
-
-
-      meta.append(
-        name,
-        username
+    const meta =
+      document.createElement(
+        "div"
       );
 
+    meta.className =
+      "chat-meta";
 
-      button.append(
-        avatar,
-        meta
+    const name =
+      document.createElement(
+        "strong"
       );
 
+    name.textContent =
+      person.display_name ||
+      "Keturio User";
 
-      button.addEventListener(
-        "click",
-        () =>
-          openDirectChat(
-            person
-          )
+    const username =
+      document.createElement(
+        "span"
       );
 
+    username.textContent =
+      person.username
+        ? `@${person.username}`
+        : "Start a conversation";
 
-      chatList.appendChild(
-        button
-      );
+    meta.append(
+      name,
+      username
+    );
 
-    }
-  );
+    button.append(
+      avatar,
+      meta
+    );
 
+    button.addEventListener(
+      "click",
+      () => openDirectChat(person)
+    );
+
+    chatList.appendChild(
+      button
+    );
+  }
 }
 
 
 /* =========================================================
-   OPEN CHAT
-========================================================= */
+   SEARCH INPUT
+   ========================================================= */
+
+searchInput?.addEventListener(
+  "input",
+  () => {
+
+    window.clearTimeout(
+      searchTimer
+    );
+
+    searchTimer =
+      window.setTimeout(
+        () => {
+
+          renderPeople(
+            searchInput.value
+          );
+
+        },
+        180
+      );
+  }
+);
+
+
+/* =========================================================
+   OPEN DIRECT CHAT
+   ========================================================= */
 
 async function openDirectChat(
   person
 ) {
 
+  if (!me || !person) {
+    return;
+  }
+
   await cleanupRealtime();
 
+  currentChat = person;
 
-  currentChat =
-    person;
+  currentConversation = null;
 
+  if (personName) {
 
-  $("#personName") &&
-    (
-      $("#personName").textContent =
+    personName.textContent =
+      person.display_name ||
+      "Keturio User";
+  }
+
+  if (personAvatar) {
+
+    personAvatar.textContent =
+      (
         person.display_name ||
-        "Keturio User"
-    );
+        "K"
+      )
+        .charAt(0)
+        .toUpperCase();
+  }
 
-
-  $("#personAvatar") &&
-    (
-      $("#personAvatar").textContent =
-        (
-          person.display_name ||
-          "K"
-        )[0].toUpperCase()
-    );
-
-
-  $("#presence") &&
-    (
-      $("#presence").textContent =
-        "connecting…"
-    );
-
+  if (presence) {
+    presence.textContent =
+      "connecting…";
+  }
 
   chatApp?.classList.add(
     "in-chat"
   );
 
+  try {
 
-  const {
-    data,
-    error
-  } =
-    await supabase.rpc(
-      "get_or_create_direct_conversation",
-      {
-        target_user_id:
-          person.id
-      }
+    const {
+      data,
+      error
+    } =
+      await supabase.rpc(
+        "get_or_create_direct_conversation",
+        {
+          target_user_id:
+            person.id
+        }
+      );
+
+    if (error) {
+      throw error;
+    }
+
+    currentConversation =
+      data;
+
+    await loadMessages();
+
+    /*
+      Message realtime and typing realtime
+      are deliberately separate.
+    */
+
+    await subscribeToMessages();
+
+    await subscribeToTyping();
+
+  } catch (error) {
+
+    console.error(
+      "Open chat error:",
+      error
     );
 
+    if (presence) {
 
-  if (error) {
-
-    diagnosticLog(
-      "error",
-      `RPC: ${error.message}`
-    );
-
+      presence.textContent =
+        "unable to open chat";
+    }
 
     notify(
-      error.message,
+      error?.message ||
+      "Could not open conversation.",
       true
     );
-
-
-    return;
-
   }
-
-
-  currentConversation =
-    data;
-
-
-  diagnostic.conversation =
-    currentConversation;
-
-
-  updateDiagnostic();
-
-
-  await loadMessages();
-
-
-  await subscribeToMessages();
-
-  await subscribeToTyping();
-
 }
 
 
 /* =========================================================
    LOAD MESSAGES
-========================================================= */
+   ========================================================= */
 
 async function loadMessages() {
 
-  if (!chatWall) {
+  if (
+    !currentConversation ||
+    !chatWall
+  ) {
     return;
   }
 
-
-  chatWall.innerHTML =
-    "";
-
+  chatWall.innerHTML = "";
 
   const chip =
     document.createElement(
       "div"
     );
 
-
   chip.className =
     "day-chip";
-
 
   chip.textContent =
     "Conversation";
 
-
   chatWall.appendChild(
     chip
   );
-
 
   const {
     data,
@@ -1380,7 +956,7 @@ async function loadMessages() {
     await supabase
       .from("messages")
       .select(
-        "id,sender_id,content,created_at"
+        "id,sender_id,content,created_at,message_type"
       )
       .eq(
         "conversation_id",
@@ -1394,179 +970,183 @@ async function loadMessages() {
       )
       .limit(100);
 
-
   if (error) {
-
-    diagnosticLog(
-      "error",
-      `LOAD MESSAGES: ${error.message}`
-    );
-
 
     notify(
       error.message,
       true
     );
 
-
     return;
-
   }
-
 
   if (!data?.length) {
 
-    const empty =
-      document.createElement(
-        "div"
-      );
-
-
-    empty.className =
-      "empty-chat";
-
-
-    empty.innerHTML =
-      `
-        <div class="spark">✦</div>
-        <h2>Say hello</h2>
-        <p>Your first message will appear here.</p>
-      `;
-
-
-    chatWall.appendChild(
-      empty
-    );
-
+    showEmptyChat();
 
     return;
-
   }
 
+  for (const message of data) {
 
-  data.forEach(
-    renderMessage
-  );
-
+    renderMessage(
+      message
+    );
+  }
 
   scrollChat();
+}
 
+
+/* =========================================================
+   EMPTY CHAT
+   ========================================================= */
+
+function showEmptyChat() {
+
+  if (!chatWall) {
+    return;
+  }
+
+  const empty =
+    document.createElement(
+      "div"
+    );
+
+  empty.className =
+    "empty-chat";
+
+  empty.innerHTML =
+    `
+      <div class="spark">✦</div>
+      <h2>Say hello</h2>
+      <p>Your first message will appear here.</p>
+    `;
+
+  chatWall.appendChild(
+    empty
+  );
 }
 
 
 /* =========================================================
    RENDER MESSAGE
-========================================================= */
+   ========================================================= */
 
 function renderMessage(
   message
 ) {
 
-  if (!message?.id) {
+  if (
+    !message?.id ||
+    !chatWall ||
+    !me
+  ) {
     return;
   }
 
-
-  const exists =
+  const existing =
     document.querySelector(
       `[data-message-id="${CSS.escape(
         String(message.id)
       )}"]`
     );
 
-
-  if (exists) {
+  if (existing) {
     return;
   }
 
-
   chatWall
-    ?.querySelector(
+    .querySelector(
       ".empty-chat"
     )
     ?.remove();
-
 
   const row =
     document.createElement(
       "div"
     );
 
-
   row.className =
     "message" +
     (
-      message.sender_id ===
-      me.id
+      message.sender_id === me.id
         ? " mine"
         : ""
     );
 
-
   row.dataset.messageId =
     message.id;
-
 
   const bubble =
     document.createElement(
       "div"
     );
 
-
   bubble.className =
     "bubble";
 
+  /*
+    textContent prevents HTML injection.
+  */
 
   bubble.textContent =
-    message.content ||
-    "";
-
+    message.content || "";
 
   const stamp =
     document.createElement(
       "span"
     );
 
-
   stamp.className =
     "stamp";
 
-
   stamp.textContent =
-    new Date(
+    formatTime(
       message.created_at
-    ).toLocaleTimeString(
-      [],
-      {
-        hour:
-          "2-digit",
-
-        minute:
-          "2-digit"
-      }
     );
-
 
   bubble.appendChild(
     stamp
   );
 
-
   row.appendChild(
     bubble
   );
 
-
-  chatWall?.appendChild(
+  chatWall.appendChild(
     row
   );
-
 }
 
 
 /* =========================================================
-   SCROLL
-========================================================= */
+   TIME FORMAT
+   ========================================================= */
+
+function formatTime(
+  timestamp
+) {
+
+  if (!timestamp) {
+    return "";
+  }
+
+  return new Date(
+    timestamp
+  ).toLocaleTimeString(
+    [],
+    {
+      hour: "2-digit",
+      minute: "2-digit"
+    }
+  );
+}
+
+
+/* =========================================================
+   SCROLL CHAT
+   ========================================================= */
 
 function scrollChat() {
 
@@ -1574,51 +1154,42 @@ function scrollChat() {
     return;
   }
 
-
   requestAnimationFrame(
     () => {
-
       chatWall.scrollTop =
         chatWall.scrollHeight;
-
     }
   );
-
 }
 
 
 /* =========================================================
-   TYPING INDICATOR
-========================================================= */
+   TYPING INDICATOR UI
+   ========================================================= */
 
-function typingIndicator() {
+function getTypingIndicator() {
 
-  let element =
+  let indicator =
     document.getElementById(
       "keturioTypingIndicator"
     );
 
-
-  if (element) {
-    return element;
+  if (indicator) {
+    return indicator;
   }
 
-
-  element =
+  indicator =
     document.createElement(
       "div"
     );
 
-
-  element.id =
+  indicator.id =
     "keturioTypingIndicator";
 
-
-  element.textContent =
+  indicator.textContent =
     "typing…";
 
-
-  element.style.cssText =
+  indicator.style.cssText =
     `
       display:none;
       width:max-content;
@@ -1631,96 +1202,66 @@ function typingIndicator() {
       font-style:italic;
     `;
 
-
-  const composer =
-    $("#composer");
-
-
   if (
     composer &&
     composer.parentNode
   ) {
 
     composer.parentNode.insertBefore(
-      element,
+      indicator,
       composer
     );
-
   }
 
-
-  return element;
-
+  return indicator;
 }
 
-
-/* =========================================================
-   SHOW TYPING
-========================================================= */
 
 function showRemoteTyping(
   show
 ) {
 
-  const element =
-    typingIndicator();
+  const indicator =
+    getTypingIndicator();
 
-
-  if (!element) {
+  if (!indicator) {
     return;
   }
 
-
-  element.style.display =
+  indicator.style.display =
     show
       ? "block"
       : "none";
 
-
-  if (remoteTypingTimer) {
-
-    clearTimeout(
-      remoteTypingTimer
-    );
-
-  }
-
+  window.clearTimeout(
+    remoteTypingTimer
+  );
 
   if (show) {
 
     remoteTypingTimer =
-      setTimeout(
+      window.setTimeout(
         () => {
 
-          element.style.display =
+          indicator.style.display =
             "none";
 
         },
         2500
       );
-
   }
-
 }
 
 
 /* =========================================================
    MESSAGE REALTIME
-========================================================= */
+   ========================================================= */
 
 async function subscribeToMessages() {
 
   if (!currentConversation) {
-
-    diagnosticLog(
-      "messageStatus",
-      "NO CONVERSATION"
-    );
-
     return;
-
   }
-
 
   if (messageChannel) {
 
@@ -1728,59 +1269,39 @@ async function subscribeToMessages() {
       messageChannel
     );
 
-    messageChannel =
-      null;
-
+    messageChannel = null;
   }
-
 
   const conversationId =
     currentConversation;
-
-
-  diagnosticLog(
-    "messageStatus",
-    "CONNECTING…"
-  );
-
 
   messageChannel =
     supabase.channel(
       `keturio-msg-${conversationId}`
     );
 
-
   messageChannel.on(
     "postgres_changes",
     {
-
-      event:
-        "INSERT",
-
-      schema:
-        "public",
-
-      table:
-        "messages",
-
+      event: "INSERT",
+      schema: "public",
+      table: "messages",
       filter:
         `conversation_id=eq.${conversationId}`
-
     },
+    (payload) => {
 
-    payload => {
+      /*
+        Ignore events from an old
+        conversation.
+      */
 
-      console.log(
-        "MESSAGE EVENT RECEIVED:",
-        payload
-      );
-
-
-      diagnosticLog(
-        "messageEvent",
-        "RECEIVED"
-      );
-
+      if (
+        currentConversation !==
+        conversationId
+      ) {
+        return;
+      }
 
       if (
         payload?.new
@@ -1791,117 +1312,106 @@ async function subscribeToMessages() {
         );
 
         scrollChat();
-
       }
-
     }
   );
-
 
   messageChannel.subscribe(
-    status => {
+    (status, error) => {
 
       console.log(
-        "MESSAGE CHANNEL:",
-        status
+        "Keturio message realtime:",
+        status,
+        error || ""
       );
 
-
       if (
-        status ===
-        "SUBSCRIBED"
+        status === "SUBSCRIBED"
       ) {
 
-        diagnosticLog(
-          "messageStatus",
-          "CONNECTED"
+        if (presence) {
+          presence.textContent =
+            "live";
+        }
+
+      } else if (
+        status === "CHANNEL_ERROR"
+      ) {
+
+        if (presence) {
+          presence.textContent =
+            "reconnecting…";
+        }
+
+        console.error(
+          "Message channel error:",
+          error
         );
-
-
-        $("#presence") &&
-          (
-            $("#presence").textContent =
-              "live"
-          );
-
 
         notify(
-          "Message realtime connected."
+          "Message realtime interrupted.",
+          true
         );
 
-      }
-
-      else if (
-        status ===
-        "CHANNEL_ERROR"
+      } else if (
+        status === "TIMED_OUT"
       ) {
 
-        diagnosticLog(
-          "messageStatus",
-          "CHANNEL ERROR"
-        );
-
-
-        diagnosticLog(
-          "error",
-          "Message channel CHANNEL_ERROR"
-        );
-
+        if (presence) {
+          presence.textContent =
+            "reconnecting…";
+        }
       }
-
-      else if (
-        status ===
-        "TIMED_OUT"
-      ) {
-
-        diagnosticLog(
-          "messageStatus",
-          "TIMEOUT"
-        );
-
-
-        diagnosticLog(
-          "error",
-          "Message channel TIMED_OUT"
-        );
-
-      }
-
-      else if (
-        status ===
-        "CLOSED"
-      ) {
-
-        diagnosticLog(
-          "messageStatus",
-          "CLOSED"
-        );
-
-      }
-
     }
   );
-
 }
 
 
 /* =========================================================
-   TYPING REALTIME
-========================================================= */
+   AUTHENTICATE REALTIME
+   ========================================================= */
+
+async function authenticateRealtime() {
+
+  const {
+    data,
+    error
+  } =
+    await supabase.auth.getSession();
+
+  if (error) {
+    throw error;
+  }
+
+  const token =
+    data?.session?.access_token;
+
+  if (!token) {
+    throw new Error(
+      "No authenticated session for Realtime."
+    );
+  }
+
+  /*
+    This gives private Realtime channels
+    the user's authenticated JWT.
+  */
+
+  supabase.realtime.setAuth(
+    token
+  );
+}
+
+
+/* =========================================================
+   PRIVATE TYPING REALTIME
+   ========================================================= */
 
 async function subscribeToTyping() {
 
   if (!currentConversation) {
-
-    diagnosticLog(
-      "typingStatus",
-      "NO CONVERSATION"
-    );
-
     return;
-
   }
-
 
   if (typingChannel) {
 
@@ -1909,163 +1419,139 @@ async function subscribeToTyping() {
       typingChannel
     );
 
-    typingChannel =
-      null;
-
+    typingChannel = null;
   }
-
 
   const conversationId =
     currentConversation;
 
+  try {
 
-  diagnosticLog(
-    "typingStatus",
-    "CONNECTING…"
-  );
+    /*
+      Authenticate the Realtime socket
+      before opening the private channel.
+    */
 
+    await authenticateRealtime();
 
-  typingChannel =
-    supabase.channel(
-      `keturio-type-${conversationId}`,
-      {
+    typingChannel =
+      supabase.channel(
+        `keturio-type-${conversationId}`,
+        {
+          config: {
 
-        config: {
+            private: true,
 
-          broadcast: {
-
-            self:
-              false
-
+            broadcast: {
+              self: false,
+              ack: true
+            }
           }
+        }
+      );
 
+
+    /* -----------------------------------------
+       RECEIVE TYPING
+    ----------------------------------------- */
+
+    typingChannel.on(
+      "broadcast",
+      {
+        event: "typing"
+      },
+      ({ payload }) => {
+
+        if (
+          currentConversation !==
+          conversationId
+        ) {
+          return;
         }
 
+        if (!payload) {
+          return;
+        }
+
+        /*
+          Never display our own typing event.
+        */
+
+        if (
+          payload.user_id ===
+          me?.id
+        ) {
+          return;
+        }
+
+        showRemoteTyping(
+          Boolean(
+            payload.typing
+          )
+        );
       }
     );
 
 
-  typingChannel.on(
-    "broadcast",
-    {
-      event:
-        "typing"
-    },
+    /* -----------------------------------------
+       CONNECT
+    ----------------------------------------- */
 
-    ({ payload }) => {
+    typingChannel.subscribe(
+      (status, error) => {
 
-      console.log(
-        "TYPING EVENT RECEIVED:",
-        payload
-      );
+        console.log(
+          "Keturio typing realtime:",
+          status,
+          error || ""
+        );
 
+        if (
+          status === "SUBSCRIBED"
+        ) {
 
-      diagnosticLog(
-        "typingEvent",
-        payload?.typing
-          ? "TYPING RECEIVED"
-          : "STOP TYPING RECEIVED"
-      );
+          console.log(
+            "Keturio typing channel connected."
+          );
 
+        } else if (
+          status === "CHANNEL_ERROR"
+        ) {
 
-      if (
-        payload?.user_id ===
-        me?.id
-      ) {
+          console.error(
+            "Keturio typing channel error:",
+            error
+          );
 
-        return;
+          /*
+            Keep chat usable even if typing
+            temporarily fails.
+          */
 
+        } else if (
+          status === "TIMED_OUT"
+        ) {
+
+          console.warn(
+            "Keturio typing channel timed out."
+          );
+        }
       }
+    );
 
+  } catch (error) {
 
-      showRemoteTyping(
-        Boolean(
-          payload?.typing
-        )
-      );
-
-    }
-  );
-
-
-  typingChannel.subscribe(
-    status => {
-
-      console.log(
-        "TYPING CHANNEL:",
-        status
-      );
-
-
-      if (
-        status ===
-        "SUBSCRIBED"
-      ) {
-
-        diagnosticLog(
-          "typingStatus",
-          "CONNECTED"
-        );
-
-      }
-
-      else if (
-        status ===
-        "CHANNEL_ERROR"
-      ) {
-
-        diagnosticLog(
-          "typingStatus",
-          "CHANNEL ERROR"
-        );
-
-
-        diagnosticLog(
-          "error",
-          "Typing channel CHANNEL_ERROR"
-        );
-
-      }
-
-      else if (
-        status ===
-        "TIMED_OUT"
-      ) {
-
-        diagnosticLog(
-          "typingStatus",
-          "TIMEOUT"
-        );
-
-
-        diagnosticLog(
-          "error",
-          "Typing channel TIMED_OUT"
-        );
-
-      }
-
-      else if (
-        status ===
-        "CLOSED"
-      ) {
-
-        diagnosticLog(
-          "typingStatus",
-          "CLOSED"
-        );
-
-      }
-
-    }
-  );
-
+    console.error(
+      "Typing realtime setup failed:",
+      error
+    );
+  }
 }
 
 
 /* =========================================================
-   SEND TYPING
-========================================================= */
+   BROADCAST TYPING
+   ========================================================= */
 
 async function broadcastTyping(
   isTyping
@@ -2073,43 +1559,33 @@ async function broadcastTyping(
 
   if (
     !typingChannel ||
-    !me ||
-    !currentConversation
+    !currentConversation ||
+    !me
   ) {
-
-    diagnosticLog(
-      "error",
-      "Cannot broadcast typing: channel not ready."
-    );
-
     return;
-
   }
 
+  /*
+    Do not send duplicate states.
+  */
 
   if (
     lastTypingState ===
     isTyping
   ) {
-
     return;
-
   }
-
 
   lastTypingState =
     isTyping;
-
 
   try {
 
     await typingChannel.send({
 
-      type:
-        "broadcast",
+      type: "broadcast",
 
-      event:
-        "typing",
+      event: "typing",
 
       payload: {
 
@@ -2121,121 +1597,87 @@ async function broadcastTyping(
 
         at:
           Date.now()
-
       }
-
     });
 
+  } catch (error) {
 
-    console.log(
-      "TYPING SENT:",
-      isTyping
+    console.debug(
+      "Typing broadcast failed:",
+      error
     );
-
   }
-
-  catch (err) {
-
-    diagnosticLog(
-      "error",
-      `Typing send: ${
-        err?.message ||
-        err
-      }`
-    );
-
-  }
-
 }
 
 
 /* =========================================================
    STOP TYPING
-========================================================= */
+   ========================================================= */
 
 function stopTyping(
   immediate = false
 ) {
 
-  if (typingStopTimer) {
+  window.clearTimeout(
+    typingStopTimer
+  );
 
-    clearTimeout(
-      typingStopTimer
-    );
+  typingStopTimer = null;
 
-    typingStopTimer =
-      null;
-
+  if (!typingChannel) {
+    return;
   }
 
-
   if (immediate) {
+
+    /*
+      Force state change so a STOP event
+      is always sent after sending.
+    */
 
     lastTypingState =
       false;
 
+    typingChannel
+      .send({
 
-    if (
-      typingChannel &&
-      me
-    ) {
+        type: "broadcast",
 
-      typingChannel
-        .send({
+        event: "typing",
 
-          type:
-            "broadcast",
+        payload: {
 
-          event:
-            "typing",
+          user_id:
+            me?.id,
 
-          payload: {
+          typing:
+            false,
 
-            user_id:
-              me.id,
+          at:
+            Date.now()
+        }
 
-            typing:
-              false,
+      })
+      .catch(
+        () => {}
+      );
 
-            at:
-              Date.now()
-
-          }
-
-        })
-        .catch(
-          () => {}
-        );
-
-    }
-
-
-    showRemoteTyping(
-      false
-    );
-
+    return;
   }
 
-  else {
-
-    broadcastTyping(
-      false
-    );
-
-  }
-
+  broadcastTyping(
+    false
+  ).catch(
+    () => {}
+  );
 }
 
 
 /* =========================================================
-   INPUT TYPING
-========================================================= */
+   MESSAGE INPUT / TYPING
+   ========================================================= */
 
-const input =
-  $("#messageInput");
-
-
-input?.addEventListener(
+messageInput?.addEventListener(
   "input",
   () => {
 
@@ -2243,23 +1685,27 @@ input?.addEventListener(
       return;
     }
 
+    /*
+      Tell the other person immediately.
+    */
 
     broadcastTyping(
       true
+    ).catch(
+      () => {}
     );
 
 
-    if (typingStopTimer) {
+    /*
+      Restart inactivity timer.
+    */
 
-      clearTimeout(
-        typingStopTimer
-      );
-
-    }
-
+    window.clearTimeout(
+      typingStopTimer
+    );
 
     typingStopTimer =
-      setTimeout(
+      window.setTimeout(
         () => {
 
           stopTyping(
@@ -2269,71 +1715,58 @@ input?.addEventListener(
         },
         1400
       );
-
   }
 );
 
 
 /* =========================================================
    SEND MESSAGE
-========================================================= */
-
-const composer =
-  $("#composer");
-
+   ========================================================= */
 
 composer?.addEventListener(
   "submit",
-  async e => {
+  async (event) => {
 
-    e.preventDefault();
+    event.preventDefault();
 
-
-    if (!currentConversation) {
+    if (
+      !currentConversation
+    ) {
 
       notify(
-        "Open a chat first.",
+        "Choose a person first.",
         true
       );
 
       return;
-
     }
 
+    const content =
+      messageInput?.value?.trim() ||
+      "";
 
-    const value =
-      input?.value?.trim();
-
-
-    if (!value) {
+    if (!content) {
       return;
     }
 
+    /*
+      Stop typing immediately.
+    */
 
-    stopTyping(
-      true
-    );
+    stopTyping(true);
 
+    /*
+      Prevent double taps.
+    */
 
-    const button =
+    const sendButton =
       composer.querySelector(
-        "button[type='submit']"
+        ".send-btn"
       );
 
-
-    if (button) {
-
-      button.disabled =
-        true;
-
+    if (sendButton) {
+      sendButton.disabled = true;
     }
-
-
-    diagnosticLog(
-      "insert",
-      "SENDING…"
-    );
-
 
     try {
 
@@ -2352,404 +1785,467 @@ composer?.addEventListener(
               me.id,
 
             content:
-              value,
+              content,
 
             message_type:
               "text"
 
           })
           .select(
-            "id,sender_id,content,created_at"
+            "id,sender_id,content,created_at,message_type"
           )
           .single();
 
-
       if (error) {
-
-        diagnosticLog(
-          "insert",
-          "FAILED"
-        );
-
-
-        diagnosticLog(
-          "error",
-          `INSERT: ${error.message}`
-        );
-
-
         throw error;
-
       }
 
-
-      diagnosticLog(
-        "insert",
-        "SUCCESS"
-      );
-
-
-      input.value =
-        "";
-
-
       /*
-        Render immediately on sender.
+        Render our own message immediately.
+        Realtime will also deliver it, but
+        renderMessage prevents duplicates.
       */
 
-      renderMessage(
-        data
-      );
+      if (data) {
 
+        renderMessage(
+          data
+        );
 
-      scrollChat();
+        scrollChat();
+      }
 
-    }
+      messageInput.value = "";
 
-    catch (err) {
+    } catch (error) {
 
       console.error(
-        "SEND ERROR:",
-        err
+        "Send message error:",
+        error
       );
 
-
       notify(
-        err?.message ||
-        "Message failed.",
+        error?.message ||
+        "Message could not be sent.",
         true
       );
 
-    }
+    } finally {
 
-    finally {
-
-      if (button) {
-
-        button.disabled =
-          false;
-
+      if (sendButton) {
+        sendButton.disabled = false;
       }
 
-
-      input?.focus();
-
+      messageInput?.focus();
     }
-
   }
 );
 
 
 /* =========================================================
-   EMOJI
-========================================================= */
+   BACK BUTTON
+   ========================================================= */
 
-$("#emojiBtn")?.addEventListener(
-  "click",
-  () => {
-
-    if (!input) {
-      return;
-    }
-
-
-    input.value +=
-      (
-        input.value
-          ? " "
-          : ""
-      ) + "✨";
-
-
-    input.focus();
-
-
-    input.dispatchEvent(
-      new Event(
-        "input",
-        {
-          bubbles:
-            true
-        }
-      )
-    );
-
-  }
-);
-
-
-/* =========================================================
-   SEARCH
-========================================================= */
-
-$("#searchInput")?.addEventListener(
-  "input",
-  e =>
-    renderPeople(
-      e.target.value
-    )
-);
-
-
-/* =========================================================
-   THEME
-========================================================= */
-
-$("#themeBtn")?.addEventListener(
-  "click",
-  () =>
-    document.body.classList.toggle(
-      "light"
-    )
-);
-
-
-/* =========================================================
-   CLEANUP
-========================================================= */
-
-async function cleanupRealtime() {
-
-  stopTyping(
-    true
-  );
-
-
-  if (messageChannel) {
-
-    try {
-
-      await supabase.removeChannel(
-        messageChannel
-      );
-
-    }
-
-    catch (_) {}
-
-
-    messageChannel =
-      null;
-
-  }
-
-
-  if (typingChannel) {
-
-    try {
-
-      await supabase.removeChannel(
-        typingChannel
-      );
-
-    }
-
-    catch (_) {}
-
-
-    typingChannel =
-      null;
-
-  }
-
-
-  diagnostic.messageStatus =
-    "CLOSED";
-
-
-  diagnostic.typingStatus =
-    "CLOSED";
-
-
-  diagnostic.lastMessageEvent =
-    "NONE";
-
-
-  diagnostic.lastTypingEvent =
-    "NONE";
-
-
-  diagnostic.conversation =
-    "NONE";
-
-
-  updateDiagnostic();
-
-}
-
-
-/* =========================================================
-   BACK
-========================================================= */
-
-$("#backBtn")?.addEventListener(
+backBtn?.addEventListener(
   "click",
   async () => {
 
     await cleanupRealtime();
 
-
-    currentConversation =
-      null;
-
-    currentChat =
-      null;
-
+    currentChat = null;
+    currentConversation = null;
 
     chatApp?.classList.remove(
       "in-chat"
     );
 
-  }
-);
+    if (personName) {
+      personName.textContent =
+        "Select a chat";
+    }
 
+    if (personAvatar) {
+      personAvatar.textContent =
+        "K";
+    }
 
-/* =========================================================
-   LOGOUT
-========================================================= */
+    if (presence) {
+      presence.textContent =
+        "Choose a person";
+    }
 
-$("#logoutBtn")?.addEventListener(
-  "click",
-  async () => {
+    if (chatWall) {
 
-    await cleanupRealtime();
-
-
-    await supabase.auth.signOut();
-
-
-    location.reload();
-
+      chatWall.innerHTML =
+        `
+          <div class="empty-chat">
+            <div class="spark">✦</div>
+            <h2>Your Keturio chat</h2>
+            <p>Choose a person to start a real-time conversation.</p>
+          </div>
+        `;
+    }
   }
 );
 
 
 /* =========================================================
    NEW CHAT
-========================================================= */
+   ========================================================= */
 
-$("#newChatBtn")?.addEventListener(
+newChatBtn?.addEventListener(
   "click",
   () => {
 
-    $("#searchInput")?.focus();
+    searchInput?.focus();
 
-
-    notify(
-      "Search for a Keturio user."
-    );
-
+    searchInput?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest"
+    });
   }
 );
 
 
 /* =========================================================
-   AUTH STATE
-========================================================= */
+   LOGOUT
+   ========================================================= */
 
-supabase.auth.onAuthStateChange(
-  async (
-    event,
-    session
-  ) => {
+logoutBtn?.addEventListener(
+  "click",
+  async () => {
 
-    console.log(
-      "AUTH EVENT:",
-      event
-    );
+    try {
 
+      await cleanupRealtime();
 
-    if (
-      session?.user
-    ) {
+      const {
+        error
+      } =
+        await supabase.auth.signOut();
 
-      if (
-        !me ||
-        me.id !==
-        session.user.id
-      ) {
-
-        await boot(
-          session.user
-        );
-
+      if (error) {
+        throw error;
       }
 
+      currentChat = null;
+      currentConversation = null;
+      me = null;
+
+      notify(
+        "Logged out."
+      );
+
+    } catch (error) {
+
+      console.error(
+        "Logout error:",
+        error
+      );
+
+      notify(
+        error?.message ||
+        "Could not log out.",
+        true
+      );
     }
-
-
-    if (
-      event ===
-      "SIGNED_OUT"
-    ) {
-
-      me =
-        null;
-
-    }
-
   }
 );
 
 
 /* =========================================================
-   EXISTING SESSION
-========================================================= */
+   CLEANUP REALTIME
+   ========================================================= */
 
-try {
+async function cleanupRealtime() {
 
-  const {
-    data: {
-      session
-    }
-  } =
-    await supabase.auth.getSession();
+  window.clearTimeout(
+    typingStopTimer
+  );
 
+  window.clearTimeout(
+    remoteTypingTimer
+  );
 
-  if (
-    session?.user
-  ) {
+  typingStopTimer = null;
+  remoteTypingTimer = null;
 
-    await boot(
-      session.user
+  lastTypingState = false;
+
+  showRemoteTyping(false);
+
+  if (messageChannel) {
+
+    await supabase.removeChannel(
+      messageChannel
     );
 
+    messageChannel = null;
   }
 
-}
+  if (typingChannel) {
 
-catch (err) {
+    await supabase.removeChannel(
+      typingChannel
+    );
 
-  console.error(
-    "SESSION ERROR:",
-    err
-  );
-
-
-  diagnosticLog(
-    "error",
-    err?.message ||
-    "Session error"
-  );
-
+    typingChannel = null;
+  }
 }
 
 
 /* =========================================================
-   START DIAGNOSTIC
-========================================================= */
+   THEME
+   ========================================================= */
 
-setTimeout(
+function loadTheme() {
+
+  const saved =
+    localStorage.getItem(
+      "keturio-theme"
+    );
+
+  if (
+    saved === "light"
+  ) {
+
+    document.body.classList.add(
+      "light"
+    );
+
+  } else {
+
+    document.body.classList.remove(
+      "light"
+    );
+  }
+}
+
+
+themeBtn?.addEventListener(
+  "click",
+  () => {
+
+    document.body.classList.toggle(
+      "light"
+    );
+
+    const isLight =
+      document.body.classList.contains(
+        "light"
+      );
+
+    localStorage.setItem(
+      "keturio-theme",
+      isLight
+        ? "light"
+        : "dark"
+    );
+  }
+);
+
+
+/* =========================================================
+   EMOJI BUTTON
+   ========================================================= */
+
+const emojiList = [
+  "😀",
+  "😂",
+  "😍",
+  "🥰",
+  "😊",
+  "😎",
+  "🤗",
+  "❤️",
+  "🔥",
+  "👍",
+  "🙏",
+  "🎉"
+];
+
+
+let emojiPanel = null;
+
+
+function toggleEmojiPanel() {
+
+  if (emojiPanel) {
+
+    emojiPanel.remove();
+
+    emojiPanel = null;
+
+    return;
+  }
+
+  emojiPanel =
+    document.createElement(
+      "div"
+    );
+
+  emojiPanel.style.cssText =
+    `
+      position:absolute;
+      bottom:65px;
+      left:12px;
+      z-index:50;
+      display:grid;
+      grid-template-columns:repeat(6,1fr);
+      gap:4px;
+      padding:8px;
+      border-radius:14px;
+      background:var(--panel,#171a27);
+      box-shadow:0 12px 35px rgba(0,0,0,.25);
+    `;
+
+  for (const emoji of emojiList) {
+
+    const button =
+      document.createElement(
+        "button"
+      );
+
+    button.type =
+      "button";
+
+    button.textContent =
+      emoji;
+
+    button.style.cssText =
+      `
+        border:0;
+        background:transparent;
+        font-size:21px;
+        padding:5px;
+        cursor:pointer;
+      `;
+
+    button.addEventListener(
+      "click",
+      () => {
+
+        if (!messageInput) {
+          return;
+        }
+
+        const start =
+          messageInput.selectionStart ??
+          messageInput.value.length;
+
+        const end =
+          messageInput.selectionEnd ??
+          messageInput.value.length;
+
+        messageInput.value =
+          messageInput.value.slice(
+            0,
+            start
+          ) +
+          emoji +
+          messageInput.value.slice(
+            end
+          );
+
+        messageInput.focus();
+
+        const position =
+          start +
+          emoji.length;
+
+        messageInput.setSelectionRange(
+          position,
+          position
+        );
+
+        messageInput.dispatchEvent(
+          new Event("input")
+        );
+
+        toggleEmojiPanel();
+      }
+    );
+
+    emojiPanel.appendChild(
+      button
+    );
+  }
+
+  if (
+    composer &&
+    composer.parentNode
+  ) {
+
+    composer.parentNode.style.position =
+      "relative";
+
+    composer.parentNode.appendChild(
+      emojiPanel
+    );
+  }
+}
+
+
+emojiBtn?.addEventListener(
+  "click",
+  toggleEmojiPanel
+);
+
+
+/* =========================================================
+   CLOSE EMOJI PANEL
+   ========================================================= */
+
+document.addEventListener(
+  "click",
+  (event) => {
+
+    if (
+      !emojiPanel ||
+      !emojiBtn
+    ) {
+      return;
+    }
+
+    if (
+      event.target === emojiBtn ||
+      emojiPanel.contains(
+        event.target
+      )
+    ) {
+      return;
+    }
+
+    emojiPanel.remove();
+
+    emojiPanel = null;
+  }
+);
+
+
+/* =========================================================
+   PAGE VISIBILITY
+   ========================================================= */
+
+document.addEventListener(
+  "visibilitychange",
   () => {
 
     if (
-      me
+      document.visibilityState ===
+      "hidden"
     ) {
 
-      createDiagnosticPanel();
-
+      stopTyping(true);
     }
-
-  },
-  500
+  }
 );
+
+
+/* =========================================================
+   START KETURIO
+   ========================================================= */
+
+loadTheme();
+
+restoreSession();
