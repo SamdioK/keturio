@@ -1498,55 +1498,55 @@ async function subscribeToTyping() {
     ----------------------------------------- */
 
     typingChannel.subscribe(
-      (status, error) => {
+  (status, err) => {
 
-        console.log(
-          "Keturio typing realtime:",
-          status,
-          error || ""
-        );
-
-        if (
-          status === "SUBSCRIBED"
-        ) {
-
-          console.log(
-            "Keturio typing channel connected."
-          );
-
-        } else if (
-          status === "CHANNEL_ERROR"
-        ) {
-
-          console.error(
-            "Keturio typing channel error:",
-            error
-          );
-
-          /*
-            Keep chat usable even if typing
-            temporarily fails.
-          */
-
-        } else if (
-          status === "TIMED_OUT"
-        ) {
-
-          console.warn(
-            "Keturio typing channel timed out."
-          );
-        }
-      }
+    console.log(
+      "KETURIO TYPING STATUS:",
+      status
     );
-
-  } catch (error) {
 
     console.error(
-      "Typing realtime setup failed:",
-      error
+      "KETURIO TYPING ERROR:",
+      err
     );
+
+    if (status === "SUBSCRIBED") {
+
+      diagnosticLog(
+        "typingStatus",
+        "CONNECTED"
+      );
+
+    } else if (status === "CHANNEL_ERROR") {
+
+      diagnosticLog(
+        "typingStatus",
+        "CHANNEL ERROR"
+      );
+
+      diagnosticLog(
+        "error",
+        JSON.stringify(
+          err || "No error object returned"
+        )
+      );
+
+    } else if (status === "TIMED_OUT") {
+
+      diagnosticLog(
+        "typingStatus",
+        "TIMEOUT"
+      );
+
+      diagnosticLog(
+        "error",
+        JSON.stringify(
+          err || "Typing channel timed out"
+        )
+      );
+    }
   }
-}
+);
 
 
 /* =========================================================
