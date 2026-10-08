@@ -1,34 +1,84 @@
-
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
 /* =========================================================
-   KETURIO STAGE 3 — SOCIAL MODULE
-   This module is deliberately separate from app.js.
+   KETURIO STAGE 3 — SOCIAL LAYER
+   ---------------------------------------------------------
+   Features:
+   • Feed
+   • Create posts
+   • Like / Love / Laugh / Wow reactions
+   • Delete own posts
+   • People discovery
+   • Search people
+   • @username / Keturio ID
+   • Follow / Unfollow
+   • Moments
+   • My Profile
+   • Edit profile
+   • Bio
+   • Follower / Following counts
+   • Mobile-friendly social interface
+
+   This file works alongside the existing app.js.
 ========================================================= */
 
-const cfg = window.KETURIO_CONFIG;
-const supabaseSocial = createClient(
-  cfg.SUPABASE_URL,
-  cfg.SUPABASE_PUBLISHABLE_KEY
-);
+import { createClient } from
+  "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 
-let socialUser = null;
-let socialProfiles = new Map();
-let activeSocialTab = "feed";
 
-const $s = (selector) => document.querySelector(selector);
+/* =========================================================
+   CONFIG
+========================================================= */
 
-function socialToast(message, error = false) {
-  const toast = $s("#toast");
-  if (!toast) return;
-  toast.textContent = message;
-  toast.classList.add("show");
-  toast.style.borderColor = error ? "rgba(255,113,133,.4)" : "";
-  setTimeout(() => toast.classList.remove("show"), 2600);
+const cfg = window.KETURIO_CONFIG || {};
+
+const SUPABASE_URL =
+  cfg.SUPABASE_URL ||
+  cfg.supabaseUrl ||
+  "";
+
+const SUPABASE_KEY =
+  cfg.SUPABASE_PUBLISHABLE_KEY ||
+  cfg.SUPABASE_ANON_KEY ||
+  cfg.supabaseKey ||
+  "";
+
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error(
+    "Keturio Social: Supabase configuration was not found."
+  );
 }
 
-function escapeHtml(value = "") {
-  return String(value)
+const supabase = createClient(
+  SUPABASE_URL,
+  SUPABASE_KEY
+);
+
+
+/* =========================================================
+   STATE
+========================================================= */
+
+let socialUser = null;
+let socialProfile = null;
+let socialProfiles = [];
+
+let activeSocialTab = "feed";
+
+let socialRoot = null;
+
+let socialLoading = false;
+
+let peopleSearchTerm = "";
+
+let socialInitialized = false;
+
+
+/* =========================================================
+   BASIC HELPERS
+========================================================= */
+
+function escapeHtml(value) {
+
+  return String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -36,542 +86,3671 @@ function escapeHtml(value = "") {
     .replaceAll("'", "&#039;");
 }
 
-function initials(name = "K") {
-  return (name.trim()[0] || "K").toUpperCase();
+
+function initials(value) {
+
+  const text =
+    String(value || "K")
+      .trim();
+
+  if (!text) {
+    return "K";
+  }
+
+  const parts =
+    text
+      .split(/\s+/)
+      .filter(Boolean);
+
+  if (parts.length === 1) {
+    return parts[0]
+      .slice(0, 2)
+      .toUpperCase();
+  }
+
+  return (
+    parts[0][0] +
+    parts[parts.length - 1][0]
+  ).toUpperCase();
 }
 
-function timeAgo(value) {
-  const seconds = Math.max(1, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return `${days}d`;
+
+function formatDate(dateValue) {
+
+  if (!dateValue) {
+    return "";
+  }
+
+  const date =
+    new Date(dateValue);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return date.toLocaleString(
+    undefined,
+    {
+      dateStyle: "medium",
+      timeStyle: "short"
+    }
+  );
 }
+
+
+function timeAgo(dateValue) {
+
+  if (!dateValue) {
+    return "";
+  }
+
+  const date =
+    new Date(dateValue);
+
+  const now =
+    Date.now();
+
+  const difference =
+    Math.max(
+      0,
+      now - date.getTime()
+    );
+
+  const seconds =
+    Math.floor(
+      difference / 1000
+    );
+
+  if (seconds < 60) {
+    return "Just now";
+  }
+
+  const minutes =
+    Math.floor(
+      seconds / 60
+    );
+
+  if (minutes < 60) {
+    return `${minutes}m ago`;
+  }
+
+  const hours =
+    Math.floor(
+      minutes / 60
+    );
+
+  if (hours < 24) {
+    return `${hours}h ago`;
+  }
+
+  const days =
+    Math.floor(
+      hours / 24
+    );
+
+  if (days < 7) {
+    return `${days}d ago`;
+  }
+
+  return formatDate(dateValue);
+}
+
+
+function showSocialToast(message) {
+
+  const existing =
+    document.getElementById("toast");
+
+  if (existing) {
+
+    existing.textContent =
+      message;
+
+    existing.classList.add(
+      "show"
+    );
+
+    clearTimeout(
+      existing.__keturioTimer
+    );
+
+    existing.__keturioTimer =
+      setTimeout(() => {
+
+        existing.classList.remove(
+          "show"
+        );
+
+      }, 2400);
+
+    return;
+  }
+
+  const toast =
+    document.createElement("div");
+
+  toast.className =
+    "toast show";
+
+  toast.textContent =
+    message;
+
+  document.body.appendChild(
+    toast
+  );
+
+  setTimeout(() => {
+
+    toast.classList.remove(
+      "show"
+    );
+
+    setTimeout(() => {
+      toast.remove();
+    }, 250);
+
+  }, 2400);
+}
+
+
+function setSocialLoading(value) {
+
+  socialLoading =
+    Boolean(value);
+
+  if (!socialRoot) {
+    return;
+  }
+
+  const loader =
+    socialRoot.querySelector(
+      ".ket-social-loader"
+    );
+
+  if (loader) {
+    loader.classList.toggle(
+      "hidden",
+      !socialLoading
+    );
+  }
+}
+
+
+/* =========================================================
+   CURRENT USER
+========================================================= */
 
 async function getMe() {
-  const { data, error } = await supabaseSocial.auth.getUser();
-  if (error) throw error;
-  socialUser = data.user;
+
+  const {
+    data,
+    error
+  } = await supabase.auth.getUser();
+
+  if (error) {
+
+    console.error(
+      "Keturio Social getUser:",
+      error
+    );
+
+    return null;
+  }
+
+  socialUser =
+    data?.user || null;
+
   return socialUser;
 }
 
-async function ensureProfile() {
-  if (!socialUser) return null;
 
-  const { data, error } = await supabaseSocial
+/* =========================================================
+   PROFILE
+========================================================= */
+
+async function ensureProfile() {
+
+  if (!socialUser) {
+    await getMe();
+  }
+
+  if (!socialUser) {
+    return null;
+  }
+
+  const {
+    data,
+    error
+  } = await supabase
     .from("profiles")
-    .select("id,display_name,username,bio,avatar_url,last_seen")
+    .select("*")
     .eq("id", socialUser.id)
     .maybeSingle();
 
-  if (error) throw error;
+  if (error) {
 
-  const profile = data || {
-    id: socialUser.id,
-    display_name: socialUser.user_metadata?.display_name || "Keturio User",
-    username: "",
-    bio: "",
-    avatar_url: ""
-  };
+    console.error(
+      "Keturio Social profile:",
+      error
+    );
 
-  socialProfiles.set(profile.id, profile);
-  return profile;
+    return null;
+  }
+
+  socialProfile =
+    data || null;
+
+  return socialProfile;
 }
+
+
+/* =========================================================
+   SOCIAL CSS
+========================================================= */
 
 function injectSocialStyles() {
-  if ($s("#keturioStage3Styles")) return;
 
-  const style = document.createElement("style");
-  style.id = "keturioStage3Styles";
+  if (
+    document.getElementById(
+      "keturio-social-styles"
+    )
+  ) {
+    return;
+  }
+
+  const style =
+    document.createElement("style");
+
+  style.id =
+    "keturio-social-styles";
+
   style.textContent = `
-    #keturioSocialBar{
-      display:flex;gap:7px;padding:9px 12px;border-bottom:1px solid var(--line);
-      overflow:auto;scrollbar-width:none;
+
+    .ket-social-shell {
+      position: fixed;
+      inset: 0;
+      z-index: 9000;
+      background: var(--bg, #080b12);
+      color: var(--text, #f4f7ff);
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
     }
-    #keturioSocialBar::-webkit-scrollbar{display:none}
-    .k3-tab{
-      flex:0 0 auto;border:1px solid var(--line);background:rgba(255,255,255,.035);
-      color:var(--muted);border-radius:999px;padding:8px 12px;font-size:11px;
+
+    .ket-social-shell.open {
+      display: flex;
     }
-    .k3-tab.active{background:linear-gradient(135deg,var(--accent),#6249d8);color:#fff;border-color:transparent}
-    #keturioSocialView{
-      position:fixed;inset:0;z-index:70;background:var(--bg);color:var(--text);
-      overflow:auto;display:none;
+
+    .ket-social-header {
+      height: 70px;
+      min-height: 70px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--line, rgba(255,255,255,.08));
+      background: var(--panel2, #0c111c);
     }
-    #keturioSocialView.open{display:block}
-    .k3-shell{width:min(760px,100%);margin:auto;min-height:100%;padding-bottom:40px}
-    .k3-head{
-      position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:10px;
-      padding:14px 16px;border-bottom:1px solid var(--line);
-      background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(18px)
+
+    .ket-social-header-title {
+      flex: 1;
+      min-width: 0;
     }
-    .k3-head h2{margin:0;font-size:18px;flex:1}
-    .k3-icon{border:0;background:transparent;color:var(--text);font-size:24px}
-    .k3-compose,.k3-card,.k3-profile{
-      margin:12px;border:1px solid var(--line);border-radius:20px;background:var(--panel);
-      box-shadow:0 10px 35px rgba(0,0,0,.12)
+
+    .ket-social-header-title strong {
+      display: block;
+      font-size: 18px;
     }
-    .k3-compose{padding:13px}
-    .k3-compose textarea{
-      width:100%;min-height:82px;resize:vertical;border:0;outline:0;background:transparent;
-      color:var(--text);font:inherit;font-size:14px
+
+    .ket-social-header-title span {
+      display: block;
+      margin-top: 2px;
+      font-size: 11px;
+      color: var(--muted, #8d9bb8);
     }
-    .k3-row{display:flex;align-items:center;gap:9px}
-    .k3-spacer{flex:1}
-    .k3-primary{
-      border:0;border-radius:12px;padding:9px 14px;background:linear-gradient(135deg,var(--accent),var(--accent2));
-      color:#fff;font-weight:800
+
+    .ket-social-icon {
+      width: 40px;
+      height: 40px;
+      border: 0;
+      border-radius: 12px;
+      background: rgba(255,255,255,.05);
+      color: var(--text, #fff);
+      cursor: pointer;
+      font-size: 18px;
     }
-    .k3-card{padding:14px}
-    .k3-user{display:flex;align-items:center;gap:10px}
-    .k3-avatar{
-      width:42px;height:42px;border-radius:14px;display:grid;place-items:center;
-      background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;font-weight:900;flex:0 0 auto
+
+    .ket-social-body {
+      flex: 1;
+      min-height: 0;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
     }
-    .k3-user strong,.k3-user span{display:block}
-    .k3-user span,.k3-muted{color:var(--muted);font-size:11px}
-    .k3-body{font-size:14px;line-height:1.55;white-space:pre-wrap;word-break:break-word;margin:13px 0}
-    .k3-actions{display:flex;gap:6px;flex-wrap:wrap}
-    .k3-action{
-      border:1px solid var(--line);background:transparent;color:var(--muted);border-radius:999px;padding:7px 10px;font-size:11px
+
+    .ket-social-tabs {
+      display: flex;
+      gap: 6px;
+      padding: 10px 14px;
+      overflow-x: auto;
+      border-bottom: 1px solid var(--line, rgba(255,255,255,.08));
+      background: var(--panel2, #0c111c);
+      scrollbar-width: none;
     }
-    .k3-action.active{color:#fff;background:rgba(124,92,255,.22);border-color:rgba(124,92,255,.5)}
-    .k3-search{
-      margin:12px;width:calc(100% - 24px);padding:12px 14px;border:1px solid var(--line);
-      border-radius:14px;background:var(--panel);color:var(--text);outline:0
+
+    .ket-social-tabs::-webkit-scrollbar {
+      display: none;
     }
-    .k3-person{display:flex;align-items:center;gap:10px;margin:8px 12px;padding:12px;border:1px solid var(--line);border-radius:17px;background:var(--panel)}
-    .k3-person-copy{flex:1;min-width:0}
-    .k3-person-copy strong,.k3-person-copy span{display:block;overflow:hidden;text-overflow:ellipsis}
-    .k3-person-copy span{font-size:11px;color:var(--muted);margin-top:3px}
-    .k3-profile{padding:20px;text-align:center}
-    .k3-profile .k3-avatar{width:76px;height:76px;border-radius:24px;margin:auto;font-size:27px}
-    .k3-profile h3{margin:12px 0 2px;font-size:22px}
-    .k3-profile p{color:var(--muted);font-size:13px}
-    .k3-editor{display:grid;gap:10px;text-align:left;margin-top:18px}
-    .k3-editor input,.k3-editor textarea{
-      width:100%;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.035);
-      color:var(--text);padding:11px;outline:0
+
+    .ket-social-tab {
+      flex: 0 0 auto;
+      border: 0;
+      border-radius: 12px;
+      padding: 9px 13px;
+      background: rgba(255,255,255,.045);
+      color: var(--muted, #8d9bb8);
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
     }
-    .k3-moment{
-      padding:14px;border:1px solid var(--line);border-radius:17px;background:var(--panel);margin:8px 12px
+
+    .ket-social-tab.active {
+      background: linear-gradient(
+        135deg,
+        var(--accent, #7c5cff),
+        var(--accent2, #00d4ff)
+      );
+      color: #fff;
     }
-    .k3-empty{padding:40px 20px;text-align:center;color:var(--muted);font-size:13px}
-    @media(max-width:760px){#keturioSocialView{inset:0}.k3-card,.k3-compose,.k3-profile{border-radius:17px}}
+
+    .ket-social-content {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+    }
+
+    .ket-social-container {
+      width: min(760px, 100%);
+      margin: 0 auto;
+    }
+
+    .ket-social-card {
+      border: 1px solid var(--line, rgba(255,255,255,.08));
+      background: var(--panel, #101522);
+      border-radius: 20px;
+      padding: 16px;
+      margin-bottom: 14px;
+      box-shadow: 0 12px 35px rgba(0,0,0,.12);
+    }
+
+    .ket-social-composer textarea {
+      width: 100%;
+      min-height: 105px;
+      resize: vertical;
+      border: 1px solid var(--line, rgba(255,255,255,.08));
+      outline: none;
+      border-radius: 15px;
+      padding: 13px;
+      background: rgba(255,255,255,.035);
+      color: var(--text, #fff);
+      font: inherit;
+    }
+
+    .ket-social-composer textarea:focus {
+      border-color: rgba(124,92,255,.65);
+    }
+
+    .ket-social-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .ket-social-space {
+      flex: 1;
+    }
+
+    .ket-social-primary {
+      border: 0;
+      border-radius: 12px;
+      padding: 10px 16px;
+      background: linear-gradient(
+        135deg,
+        var(--accent, #7c5cff),
+        var(--accent2, #00d4ff)
+      );
+      color: #fff;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .ket-social-secondary {
+      border: 1px solid var(--line, rgba(255,255,255,.08));
+      border-radius: 12px;
+      padding: 9px 13px;
+      background: rgba(255,255,255,.035);
+      color: var(--text, #fff);
+      cursor: pointer;
+    }
+
+    .ket-social-danger {
+      border: 1px solid rgba(255,113,133,.25);
+      border-radius: 12px;
+      padding: 8px 12px;
+      background: rgba(255,113,133,.08);
+      color: #ff7185;
+      cursor: pointer;
+    }
+
+    .ket-post-head {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      margin-bottom: 12px;
+    }
+
+    .ket-avatar {
+      width: 44px;
+      height: 44px;
+      min-width: 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 14px;
+      background: linear-gradient(
+        135deg,
+        var(--accent, #7c5cff),
+        var(--accent2, #00d4ff)
+      );
+      color: #fff;
+      font-weight: 900;
+      overflow: hidden;
+    }
+
+    .ket-avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .ket-post-author {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .ket-post-author strong {
+      display: block;
+      font-size: 14px;
+    }
+
+    .ket-post-author span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted, #8d9bb8);
+      font-size: 11px;
+    }
+
+    .ket-post-content {
+      font-size: 14px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      margin: 9px 0 14px;
+    }
+
+    .ket-post-image {
+      width: 100%;
+      max-height: 480px;
+      object-fit: cover;
+      border-radius: 16px;
+      margin-bottom: 12px;
+    }
+
+    .ket-post-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      padding-top: 10px;
+      border-top: 1px solid var(--line, rgba(255,255,255,.08));
+    }
+
+    .ket-reaction {
+      border: 1px solid transparent;
+      border-radius: 10px;
+      padding: 7px 10px;
+      background: rgba(255,255,255,.04);
+      color: var(--muted, #8d9bb8);
+      cursor: pointer;
+      font-size: 12px;
+    }
+
+    .ket-reaction:hover,
+    .ket-reaction.active {
+      background: rgba(124,92,255,.16);
+      border-color: rgba(124,92,255,.35);
+      color: #fff;
+    }
+
+    .ket-people-search {
+      width: 100%;
+      border: 1px solid var(--line, rgba(255,255,255,.08));
+      outline: none;
+      border-radius: 14px;
+      padding: 12px 14px;
+      background: rgba(255,255,255,.035);
+      color: var(--text, #fff);
+      margin-bottom: 14px;
+    }
+
+    .ket-person {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 11px 0;
+      border-bottom: 1px solid var(--line, rgba(255,255,255,.08));
+    }
+
+    .ket-person:last-child {
+      border-bottom: 0;
+    }
+
+    .ket-person-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .ket-person-info strong {
+      display: block;
+      font-size: 14px;
+    }
+
+    .ket-person-info span {
+      display: block;
+      margin-top: 3px;
+      font-size: 11px;
+      color: var(--muted, #8d9bb8);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .ket-empty {
+      text-align: center;
+      padding: 45px 20px;
+      color: var(--muted, #8d9bb8);
+    }
+
+    .ket-empty .emoji {
+      font-size: 38px;
+      margin-bottom: 10px;
+    }
+
+    .ket-empty h3 {
+      color: var(--text, #fff);
+      margin: 5px 0 7px;
+    }
+
+    .ket-profile-hero {
+      text-align: center;
+      padding: 10px 0 20px;
+    }
+
+    .ket-profile-avatar {
+      width: 82px;
+      height: 82px;
+      margin: 0 auto 12px;
+      display: grid;
+      place-items: center;
+      border-radius: 25px;
+      background: linear-gradient(
+        135deg,
+        var(--accent, #7c5cff),
+        var(--accent2, #00d4ff)
+      );
+      color: #fff;
+      font-size: 25px;
+      font-weight: 900;
+      overflow: hidden;
+    }
+
+    .ket-profile-avatar img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .ket-profile-hero h2 {
+      margin: 0;
+    }
+
+    .ket-profile-username {
+      color: var(--muted, #8d9bb8);
+      font-size: 13px;
+      margin-top: 4px;
+    }
+
+    .ket-profile-bio {
+      max-width: 520px;
+      margin: 12px auto;
+      line-height: 1.5;
+      font-size: 13px;
+      color: var(--muted, #8d9bb8);
+    }
+
+    .ket-profile-stats {
+      display: flex;
+      justify-content: center;
+      gap: 35px;
+      margin: 18px 0;
+    }
+
+    .ket-profile-stat strong {
+      display: block;
+      font-size: 18px;
+    }
+
+    .ket-profile-stat span {
+      color: var(--muted, #8d9bb8);
+      font-size: 10px;
+    }
+
+    .ket-field {
+      display: block;
+      margin: 13px 0;
+    }
+
+    .ket-field span {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--muted, #8d9bb8);
+      font-size: 11px;
+    }
+
+    .ket-field input,
+    .ket-field textarea {
+      width: 100%;
+      border: 1px solid var(--line, rgba(255,255,255,.08));
+      outline: none;
+      border-radius: 12px;
+      padding: 11px 12px;
+      background: rgba(255,255,255,.035);
+      color: var(--text, #fff);
+      font: inherit;
+    }
+
+    .ket-field textarea {
+      min-height: 90px;
+      resize: vertical;
+    }
+
+    .ket-moment {
+      position: relative;
+      overflow: hidden;
+      border-radius: 18px;
+      padding: 18px;
+      margin-bottom: 12px;
+      background:
+        radial-gradient(
+          circle at top right,
+          rgba(0,212,255,.18),
+          transparent 45%
+        ),
+        radial-gradient(
+          circle at bottom left,
+          rgba(124,92,255,.22),
+          transparent 45%
+        ),
+        var(--panel, #101522);
+      border: 1px solid var(--line, rgba(255,255,255,.08));
+    }
+
+    .ket-moment-time {
+      color: var(--muted, #8d9bb8);
+      font-size: 10px;
+      margin-top: 5px;
+    }
+
+    .ket-moment-content {
+      margin-top: 13px;
+      line-height: 1.5;
+      font-size: 14px;
+      white-space: pre-wrap;
+    }
+
+    .ket-social-loader {
+      text-align: center;
+      padding: 10px;
+      color: var(--muted, #8d9bb8);
+      font-size: 11px;
+    }
+
+    .ket-social-loader.hidden {
+      display: none;
+    }
+
+    .ket-social-close {
+      margin-left: auto;
+    }
+
+    @media (min-width: 900px) {
+
+      .ket-social-content {
+        padding: 24px;
+      }
+
+      .ket-social-tabs {
+        justify-content: center;
+      }
+
+    }
+
+    @media (max-width: 600px) {
+
+      .ket-social-header {
+        height: 62px;
+        min-height: 62px;
+      }
+
+      .ket-social-content {
+        padding: 12px;
+      }
+
+      .ket-social-card {
+        border-radius: 17px;
+        padding: 14px;
+      }
+
+      .ket-profile-stats {
+        gap: 25px;
+      }
+
+    }
+
   `;
-  document.head.appendChild(style);
+
+  document.head.appendChild(
+    style
+  );
 }
 
-function injectSocialBar() {
-  const sidebar = $s(".sidebar");
-  if (!sidebar || $s("#keturioSocialBar")) return;
 
-  const bar = document.createElement("div");
-  bar.id = "keturioSocialBar";
-  bar.innerHTML = `
-    <button class="k3-tab active" data-k3="feed">Feed</button>
-    <button class="k3-tab" data-k3="people">People</button>
-    <button class="k3-tab" data-k3="moments">Moments</button>
-    <button class="k3-tab" data-k3="profile">My profile</button>
-  `;
-  sidebar.insertBefore(bar, sidebar.querySelector(".search-wrap"));
+/* =========================================================
+   SOCIAL ROOT
+========================================================= */
 
-  bar.addEventListener("click", (event) => {
-    const button = event.target.closest("[data-k3]");
-    if (!button) return;
-    openSocial(button.dataset.k3);
-  });
-}
+function createSocialRoot() {
 
-function injectSocialView() {
-  if ($s("#keturioSocialView")) return;
+  if (
+    document.getElementById(
+      "keturioSocialShell"
+    )
+  ) {
 
-  const view = document.createElement("section");
-  view.id = "keturioSocialView";
-  view.innerHTML = `
-    <div class="k3-shell">
-      <header class="k3-head">
-        <button class="k3-icon" id="k3Close" aria-label="Close">‹</button>
-        <h2 id="k3Title">Keturio Feed</h2>
-        <button class="k3-icon" id="k3Refresh" aria-label="Refresh">↻</button>
-      </header>
-      <div id="k3Content"></div>
+    socialRoot =
+      document.getElementById(
+        "keturioSocialShell"
+      );
+
+    return socialRoot;
+  }
+
+  injectSocialStyles();
+
+  socialRoot =
+    document.createElement("section");
+
+  socialRoot.id =
+    "keturioSocialShell";
+
+  socialRoot.className =
+    "ket-social-shell";
+
+  socialRoot.innerHTML = `
+
+    <header class="ket-social-header">
+
+      <button
+        class="ket-social-icon"
+        id="ketSocialBack"
+        type="button"
+        aria-label="Back"
+      >
+        ‹
+      </button>
+
+      <div class="ket-social-header-title">
+
+        <strong>
+          Keturio
+        </strong>
+
+        <span>
+          Connect. Chat. Belong.
+        </span>
+
+      </div>
+
+      <button
+        class="ket-social-icon"
+        id="ketSocialRefresh"
+        type="button"
+        aria-label="Refresh"
+      >
+        ↻
+      </button>
+
+      <button
+        class="ket-social-icon ket-social-close"
+        id="ketSocialClose"
+        type="button"
+        aria-label="Close"
+      >
+        ×
+      </button>
+
+    </header>
+
+    <div class="ket-social-body">
+
+      <nav
+        class="ket-social-tabs"
+        id="ketSocialTabs"
+      >
+
+        <button
+          class="ket-social-tab active"
+          data-social-tab="feed"
+          type="button"
+        >
+          📰 Feed
+        </button>
+
+        <button
+          class="ket-social-tab"
+          data-social-tab="people"
+          type="button"
+        >
+          👥 People
+        </button>
+
+        <button
+          class="ket-social-tab"
+          data-social-tab="moments"
+          type="button"
+        >
+          ✨ Moments
+        </button>
+
+        <button
+          class="ket-social-tab"
+          data-social-tab="profile"
+          type="button"
+        >
+          👤 My Profile
+        </button>
+
+      </nav>
+
+      <div
+        class="ket-social-loader hidden"
+        id="ketSocialLoader"
+      >
+        Loading Keturio…
+      </div>
+
+      <div
+        class="ket-social-content"
+        id="ketSocialContent"
+      ></div>
+
     </div>
+
   `;
-  document.body.appendChild(view);
-  $s("#k3Close")?.addEventListener("click", closeSocial);
-  $s("#k3Refresh")?.addEventListener("click", () => renderSocial(activeSocialTab));
+
+  document.body.appendChild(
+    socialRoot
+  );
+
+  bindSocialRootEvents();
+
+  return socialRoot;
 }
 
-function openSocial(tab) {
-  activeSocialTab = tab;
-  injectSocialView();
-  $s("#keturioSocialView")?.classList.add("open");
-  renderSocial(tab);
+
+/* =========================================================
+   ROOT EVENTS
+========================================================= */
+
+function bindSocialRootEvents() {
+
+  if (!socialRoot) {
+    return;
+  }
+
+  const closeButton =
+    socialRoot.querySelector(
+      "#ketSocialClose"
+    );
+
+  const backButton =
+    socialRoot.querySelector(
+      "#ketSocialBack"
+    );
+
+  const refreshButton =
+    socialRoot.querySelector(
+      "#ketSocialRefresh"
+    );
+
+  closeButton?.addEventListener(
+    "click",
+    closeSocial
+  );
+
+  backButton?.addEventListener(
+    "click",
+    closeSocial
+  );
+
+  refreshButton?.addEventListener(
+    "click",
+    () => {
+      renderSocial(
+        activeSocialTab
+      );
+    }
+  );
+
+  socialRoot
+    .querySelectorAll(
+      "[data-social-tab]"
+    )
+    .forEach(button => {
+
+      button.addEventListener(
+        "click",
+        () => {
+
+          const tab =
+            button.dataset.socialTab;
+
+          openSocialTab(
+            tab
+          );
+
+        }
+      );
+
+    });
+
+  window.addEventListener(
+    "keturio:open-social",
+    () => {
+      openSocial();
+    }
+  );
 }
+
+
+/* =========================================================
+   OPEN / CLOSE SOCIAL
+========================================================= */
+
+async function openSocial(
+  tab = "feed"
+) {
+
+  if (!socialRoot) {
+    createSocialRoot();
+  }
+
+  if (!socialRoot) {
+    return;
+  }
+
+  await getMe();
+
+  if (!socialUser) {
+
+    showSocialToast(
+      "Please log in to use Keturio Social."
+    );
+
+    return;
+  }
+
+  socialRoot.classList.add(
+    "open"
+  );
+
+  document.body.style.overflow =
+    "hidden";
+
+  activeSocialTab =
+    tab;
+
+  updateSocialTabButtons();
+
+  await renderSocial(
+    activeSocialTab
+  );
+}
+
 
 function closeSocial() {
-  $s("#keturioSocialView")?.classList.remove("open");
+
+  if (!socialRoot) {
+    return;
+  }
+
+  socialRoot.classList.remove(
+    "open"
+  );
+
+  document.body.style.overflow =
+    "";
+
+  const chatApp =
+    document.getElementById(
+      "chatApp"
+    );
+
+  if (
+    chatApp &&
+    window.innerWidth <= 760
+  ) {
+    chatApp.classList.remove(
+      "in-chat"
+    );
+  }
 }
 
-async function renderSocial(tab) {
-  activeSocialTab = tab;
-  const content = $s("#k3Content");
-  const title = $s("#k3Title");
-  if (!content || !title) return;
 
-  const titles = {feed:"Keturio Feed",people:"Discover People",moments:"Moments",profile:"My Profile"};
-  title.textContent = titles[tab] || "Keturio";
+async function openSocialTab(
+  tab
+) {
 
-  content.innerHTML = `<div class="k3-empty">Loading Keturio…</div>`;
+  activeSocialTab =
+    tab;
+
+  updateSocialTabButtons();
+
+  await renderSocial(
+    tab
+  );
+}
+
+
+function updateSocialTabButtons() {
+
+  if (!socialRoot) {
+    return;
+  }
+
+  socialRoot
+    .querySelectorAll(
+      "[data-social-tab]"
+    )
+    .forEach(button => {
+
+      button.classList.toggle(
+        "active",
+        button.dataset.socialTab ===
+          activeSocialTab
+      );
+
+    });
+}
+
+
+/* =========================================================
+   MAIN RENDER
+========================================================= */
+
+async function renderSocial(
+  tab
+) {
+
+  if (!socialRoot) {
+    createSocialRoot();
+  }
+
+  const content =
+    socialRoot?.querySelector(
+      "#ketSocialContent"
+    );
+
+  if (!content) {
+    return;
+  }
+
+  setSocialLoading(true);
 
   try {
-    if (tab === "feed") await renderFeed(content);
-    if (tab === "people") await renderPeople(content);
-    if (tab === "moments") await renderMoments(content);
-    if (tab === "profile") await renderProfile(content);
+
+    await ensureProfile();
+
+    if (tab === "feed") {
+      await renderFeed(content);
+    }
+
+    else if (tab === "people") {
+      await renderPeople(content);
+    }
+
+    else if (tab === "moments") {
+      await renderMoments(content);
+    }
+
+    else if (tab === "profile") {
+      await renderProfile(content);
+    }
+
   } catch (error) {
-    console.error("KETURIO SOCIAL ERROR", error);
-    content.innerHTML = `<div class="k3-empty">${escapeHtml(error.message || "Could not load social content.")}</div>`;
+
+    console.error(
+      "Keturio Social render:",
+      error
+    );
+
+    content.innerHTML = `
+
+      <div class="ket-empty">
+
+        <div class="emoji">
+          ⚠️
+        </div>
+
+        <h3>
+          Something went wrong
+        </h3>
+
+        <p>
+          ${escapeHtml(
+            error?.message ||
+            "Unable to load this section."
+          )}
+        </p>
+
+      </div>
+
+    `;
+
+  } finally {
+
+    setSocialLoading(false);
+
   }
 }
 
-async function renderFeed(content) {
-  content.innerHTML = `
-    <form class="k3-compose" id="k3PostForm">
-      <textarea id="k3PostText" maxlength="5000" placeholder="What's happening in your Keturio world?"></textarea>
-      <div class="k3-row">
-        <span class="k3-muted">Share with your Keturio community</span>
-        <span class="k3-spacer"></span>
-        <button class="k3-primary" type="submit">Post</button>
+
+/* =========================================================
+   FEED
+========================================================= */
+
+async function renderFeed(
+  container
+) {
+
+  container.innerHTML = `
+
+    <div class="ket-social-container">
+
+      <div class="ket-social-card ket-social-composer">
+
+        <div class="ket-post-head">
+
+          <div class="ket-avatar">
+
+            ${
+              socialProfile?.avatar_url
+                ? `
+                  <img
+                    src="${escapeHtml(
+                      socialProfile.avatar_url
+                    )}"
+                    alt=""
+                  >
+                `
+                : escapeHtml(
+                    initials(
+                      socialProfile?.display_name ||
+                      "Keturio"
+                    )
+                  )
+            }
+
+          </div>
+
+          <div class="ket-post-author">
+
+            <strong>
+              ${escapeHtml(
+                socialProfile?.display_name ||
+                socialUser?.email ||
+                "Keturio User"
+              )}
+            </strong>
+
+            <span>
+              What's happening?
+            </span>
+
+          </div>
+
+        </div>
+
+        <textarea
+          id="ketPostInput"
+          maxlength="5000"
+          placeholder="Share something with Keturio…"
+        ></textarea>
+
+        <div
+          class="ket-social-row"
+          style="margin-top:10px"
+        >
+
+          <span class="ket-social-space"></span>
+
+          <button
+            class="ket-social-primary"
+            id="ketCreatePost"
+            type="button"
+          >
+            Post
+          </button>
+
+        </div>
+
       </div>
-    </form>
-    <div id="k3FeedList"></div>
+
+      <div id="ketFeedList"></div>
+
+    </div>
+
   `;
 
-  $s("#k3PostForm")?.addEventListener("submit", createPost);
+  const createButton =
+    container.querySelector(
+      "#ketCreatePost"
+    );
 
-  const { data: posts, error } = await supabaseSocial
+  createButton?.addEventListener(
+    "click",
+    createPost
+  );
+
+  await loadFeedPosts();
+}
+
+
+async function loadFeedPosts() {
+
+  const list =
+    socialRoot?.querySelector(
+      "#ketFeedList"
+    );
+
+  if (!list) {
+    return;
+  }
+
+  list.innerHTML = `
+
+    <div class="ket-empty">
+
+      <div class="emoji">
+        📰
+      </div>
+
+      <h3>
+        Loading Feed
+      </h3>
+
+      <p>
+        Getting the latest Keturio posts…
+      </p>
+
+    </div>
+
+  `;
+
+  const {
+    data: posts,
+    error
+  } = await supabase
     .from("posts")
-    .select("id,author_id,content,created_at")
-    .order("created_at", { ascending:false })
+    .select(`
+      id,
+      author_id,
+      content,
+      image_url,
+      created_at,
+      updated_at
+    `)
+    .order(
+      "created_at",
+      {
+        ascending: false
+      }
+    )
     .limit(50);
 
-  if (error) throw error;
-
-  const authorIds = [...new Set((posts || []).map(p => p.author_id))];
-  await loadProfiles(authorIds);
-
-  const list = $s("#k3FeedList");
-  if (!posts?.length) {
-    list.innerHTML = `<div class="k3-empty">Your Keturio feed is ready. Be the first to post.</div>`;
-    return;
-  }
-
-  const { data: reactions } = await supabaseSocial
-    .from("post_reactions")
-    .select("post_id,user_id,reaction")
-    .in("post_id", posts.map(p => p.id));
-
-  const counts = {};
-  for (const r of reactions || []) {
-    counts[r.post_id] ||= {like:0,love:0,laugh:0,wow:0,sad:0,angry:0, mine:null};
-    counts[r.post_id][r.reaction]++;
-    if (r.user_id === socialUser.id) counts[r.post_id].mine = r.reaction;
-  }
-
-  list.innerHTML = posts.map(post => {
-    const p = socialProfiles.get(post.author_id) || {};
-    const c = counts[post.id] || {like:0,love:0,laugh:0,wow:0,sad:0,angry:0,mine:null};
-    return `
-      <article class="k3-card">
-        <div class="k3-user">
-          <div class="k3-avatar">${initials(escapeHtml(p.display_name || "Keturio User"))}</div>
-          <div>
-            <strong>${escapeHtml(p.display_name || "Keturio User")}</strong>
-            <span>${p.username ? "@"+escapeHtml(p.username)+" · " : ""}${timeAgo(post.created_at)}</span>
-          </div>
-        </div>
-        <div class="k3-body">${escapeHtml(post.content)}</div>
-        <div class="k3-actions">
-          ${["like","love","laugh","wow"].map(r => `<button class="k3-action ${c.mine===r?"active":""}" data-react="${r}" data-post="${post.id}">${{like:"👍",love:"❤️",laugh:"😂",wow:"😮"}[r]} ${c[r] || 0}</button>`).join("")}
-          ${post.author_id === socialUser.id ? `<button class="k3-action" data-delete="${post.id}">Delete</button>` : ""}
-        </div>
-      </article>
-    `;
-  }).join("");
-
-  list.addEventListener("click", handleFeedAction);
-}
-
-async function createPost(event) {
-  event.preventDefault();
-  const text = $s("#k3PostText")?.value.trim();
-  if (!text) return;
-
-  const { error } = await supabaseSocial.from("posts").insert({
-    author_id: socialUser.id,
-    content: text
-  });
   if (error) {
-    socialToast(error.message, true);
+
+    console.error(
+      "Keturio Feed:",
+      error
+    );
+
+    list.innerHTML = `
+
+      <div class="ket-empty">
+
+        <div class="emoji">
+          ⚠️
+        </div>
+
+        <h3>
+          Feed unavailable
+        </h3>
+
+        <p>
+          ${escapeHtml(
+            error.message
+          )}
+        </p>
+
+      </div>
+
+    `;
+
     return;
   }
-  socialToast("Posted to Keturio.");
-  renderSocial("feed");
+
+  if (!posts?.length) {
+
+    list.innerHTML = `
+
+      <div class="ket-empty">
+
+        <div class="emoji">
+          ✨
+        </div>
+
+        <h3>
+          Your Feed is empty
+        </h3>
+
+        <p>
+          Be the first person to post something on Keturio.
+        </p>
+
+      </div>
+
+    `;
+
+    return;
+  }
+
+  const authorIds =
+    [
+      ...new Set(
+        posts.map(
+          post =>
+            post.author_id
+        )
+      )
+    ];
+
+  const {
+    data: profiles
+  } = await supabase
+    .from("profiles")
+    .select(`
+      id,
+      display_name,
+      username,
+      avatar_url
+    `)
+    .in(
+      "id",
+      authorIds
+    );
+
+  const profileMap =
+    new Map(
+      (profiles || []).map(
+        profile => [
+          profile.id,
+          profile
+        ]
+      )
+    );
+
+  const postIds =
+    posts.map(
+      post => post.id
+    );
+
+  const {
+    data: reactions
+  } = await supabase
+    .from("post_reactions")
+    .select(`
+      post_id,
+      user_id,
+      reaction
+    `)
+    .in(
+      "post_id",
+      postIds
+    );
+
+  const reactionMap =
+    new Map();
+
+  for (
+    const reaction
+    of reactions || []
+  ) {
+
+    if (
+      !reactionMap.has(
+        reaction.post_id
+      )
+    ) {
+      reactionMap.set(
+        reaction.post_id,
+        []
+      );
+    }
+
+    reactionMap
+      .get(reaction.post_id)
+      .push(reaction);
+
+  }
+
+  list.innerHTML =
+    posts.map(
+      post => {
+
+        const author =
+          profileMap.get(
+            post.author_id
+          ) || {};
+
+        const postReactions =
+          reactionMap.get(
+            post.id
+          ) || [];
+
+        return renderPost(
+          post,
+          author,
+          postReactions
+        );
+
+      }
+    ).join("");
+
+  bindPostActions(
+    list
+  );
 }
 
-async function handleFeedAction(event) {
-  const react = event.target.closest("[data-react]");
-  const del = event.target.closest("[data-delete]");
 
-  if (react) {
-    const postId = react.dataset.post;
-    const reaction = react.dataset.react;
-    const { data: existing } = await supabaseSocial
+/* =========================================================
+   POST HTML
+========================================================= */
+
+function renderPost(
+  post,
+  author,
+  reactions
+) {
+
+  const displayName =
+    author.display_name ||
+    "Keturio User";
+
+  const username =
+    author.username
+      ? `@${author.username}`
+      : "";
+
+  const avatar =
+    author.avatar_url
+      ? `
+        <img
+          src="${escapeHtml(
+            author.avatar_url
+          )}"
+          alt=""
+        >
+      `
+      : escapeHtml(
+          initials(
+            displayName
+          )
+        );
+
+  const reactionTypes = [
+    ["like", "👍"],
+    ["love", "❤️"],
+    ["laugh", "😂"],
+    ["wow", "😮"]
+  ];
+
+  const isMine =
+    socialUser &&
+    post.author_id ===
+      socialUser.id;
+
+  const counts =
+    {};
+
+  for (
+    const reaction
+    of reactions
+  ) {
+
+    counts[
+      reaction.reaction
+    ] =
+      (
+        counts[
+          reaction.reaction
+        ] || 0
+      ) + 1;
+
+  }
+
+  return `
+
+    <article
+      class="ket-social-card ket-post"
+      data-post-id="${escapeHtml(
+        post.id
+      )}"
+    >
+
+      <div class="ket-post-head">
+
+        <div class="ket-avatar">
+
+          ${avatar}
+
+        </div>
+
+        <div class="ket-post-author">
+
+          <strong>
+            ${escapeHtml(
+              displayName
+            )}
+          </strong>
+
+          <span>
+            ${
+              username
+                ? escapeHtml(
+                    username
+                  ) + " · "
+                : ""
+            }
+            ${escapeHtml(
+              timeAgo(
+                post.created_at
+              )
+            )}
+          </span>
+
+        </div>
+
+        ${
+          isMine
+            ? `
+              <button
+                class="ket-social-danger"
+                data-post-action="delete"
+                type="button"
+              >
+                Delete
+              </button>
+            `
+            : ""
+        }
+
+      </div>
+
+      <div class="ket-post-content">
+
+        ${escapeHtml(
+          post.content
+        )}
+
+      </div>
+
+      ${
+        post.image_url
+          ? `
+            <img
+              class="ket-post-image"
+              src="${escapeHtml(
+                post.image_url
+              )}"
+              alt="Post image"
+            >
+          `
+          : ""
+      }
+
+      <div class="ket-post-actions">
+
+        ${reactionTypes.map(
+          ([type, emoji]) => {
+
+            const active =
+              reactions.some(
+                reaction =>
+                  reaction.user_id ===
+                    socialUser?.id &&
+                  reaction.reaction ===
+                    type
+              );
+
+            const count =
+              counts[type] || 0;
+
+            return `
+
+              <button
+                class="ket-reaction ${
+                  active
+                    ? "active"
+                    : ""
+                }"
+                data-post-action="react"
+                data-reaction="${type}"
+                type="button"
+              >
+                ${emoji}
+                ${
+                  count
+                    ? ` ${count}`
+                    : ""
+                }
+              </button>
+
+            `;
+
+          }
+        ).join("")}
+
+      </div>
+
+    </article>
+
+  `;
+}
+
+
+/* =========================================================
+   CREATE POST
+========================================================= */
+
+async function createPost() {
+
+  if (!socialUser) {
+    await getMe();
+  }
+
+  if (!socialUser) {
+
+    showSocialToast(
+      "Please log in first."
+    );
+
+    return;
+  }
+
+  const input =
+    socialRoot?.querySelector(
+      "#ketPostInput"
+    );
+
+  if (!input) {
+    return;
+  }
+
+  const content =
+    input.value.trim();
+
+  if (!content) {
+
+    showSocialToast(
+      "Write something before posting."
+    );
+
+    input.focus();
+
+    return;
+  }
+
+  if (content.length > 5000) {
+
+    showSocialToast(
+      "Your post is too long."
+    );
+
+    return;
+  }
+
+  const button =
+    socialRoot.querySelector(
+      "#ketCreatePost"
+    );
+
+  if (button) {
+    button.disabled = true;
+    button.textContent =
+      "Posting…";
+  }
+
+  try {
+
+    const {
+      error
+    } = await supabase
+      .from("posts")
+      .insert({
+        author_id:
+          socialUser.id,
+        content
+      });
+
+    if (error) {
+      throw error;
+    }
+
+    input.value =
+      "";
+
+    showSocialToast(
+      "Post published."
+    );
+
+    await loadFeedPosts();
+
+  } catch (error) {
+
+    console.error(
+      "Keturio create post:",
+      error
+    );
+
+    showSocialToast(
+      error.message ||
+      "Unable to publish post."
+    );
+
+  } finally {
+
+    if (button) {
+      button.disabled =
+        false;
+      button.textContent =
+        "Post";
+    }
+
+  }
+}
+
+
+/* =========================================================
+   POST ACTIONS
+========================================================= */
+
+function bindPostActions(
+  container
+) {
+
+  container
+    .querySelectorAll(
+      "[data-post-action]"
+    )
+    .forEach(button => {
+
+      button.addEventListener(
+        "click",
+        async () => {
+
+          const post =
+            button.closest(
+              "[data-post-id]"
+            );
+
+          if (!post) {
+            return;
+          }
+
+          const postId =
+            post.dataset.postId;
+
+          const action =
+            button.dataset.postAction;
+
+          if (
+            action === "react"
+          ) {
+
+            await toggleReaction(
+              postId,
+              button.dataset.reaction
+            );
+
+          }
+
+          if (
+            action === "delete"
+          ) {
+
+            await deletePost(
+              postId
+            );
+
+          }
+
+        }
+      );
+
+    });
+}
+
+
+/* =========================================================
+   REACTION
+========================================================= */
+
+async function toggleReaction(
+  postId,
+  reaction
+) {
+
+  if (!socialUser) {
+    return;
+  }
+
+  try {
+
+    const {
+      data: existing,
+      error: findError
+    } = await supabase
       .from("post_reactions")
-      .select("reaction")
-      .eq("post_id", postId)
-      .eq("user_id", socialUser.id)
+      .select(`
+        post_id,
+        user_id,
+        reaction
+      `)
+      .eq(
+        "post_id",
+        postId
+      )
+      .eq(
+        "user_id",
+        socialUser.id
+      )
       .maybeSingle();
 
-    let error;
-    if (existing?.reaction === reaction) {
-      ({ error } = await supabaseSocial.from("post_reactions").delete().eq("post_id",postId).eq("user_id",socialUser.id));
-    } else {
-      ({ error } = await supabaseSocial.from("post_reactions").upsert(
-        {post_id:postId,user_id:socialUser.id,reaction},
-        {onConflict:"post_id,user_id"}
-      ));
+    if (findError) {
+      throw findError;
     }
-    if (error) socialToast(error.message, true);
-    else renderSocial("feed");
-  }
 
-  if (del) {
-    const { error } = await supabaseSocial.from("posts").delete().eq("id", del.dataset.delete).eq("author_id", socialUser.id);
-    if (error) socialToast(error.message, true);
-    else renderSocial("feed");
+    if (
+      existing &&
+      existing.reaction ===
+        reaction
+    ) {
+
+      const {
+        error
+      } = await supabase
+        .from("post_reactions")
+        .delete()
+        .eq(
+          "post_id",
+          postId
+        )
+        .eq(
+          "user_id",
+          socialUser.id
+        );
+
+      if (error) {
+        throw error;
+      }
+
+    } else if (existing) {
+
+      const {
+        error
+      } = await supabase
+        .from("post_reactions")
+        .update({
+          reaction
+        })
+        .eq(
+          "post_id",
+          postId
+        )
+        .eq(
+          "user_id",
+          socialUser.id
+        );
+
+      if (error) {
+        throw error;
+      }
+
+    } else {
+
+      const {
+        error
+      } = await supabase
+        .from("post_reactions")
+        .insert({
+          post_id:
+            postId,
+          user_id:
+            socialUser.id,
+          reaction
+        });
+
+      if (error) {
+        throw error;
+      }
+
+    }
+
+    await loadFeedPosts();
+
+  } catch (error) {
+
+    console.error(
+      "Keturio reaction:",
+      error
+    );
+
+    showSocialToast(
+      error.message ||
+      "Unable to update reaction."
+    );
+
   }
 }
 
-async function renderPeople(content) {
-  content.innerHTML = `
-    <input class="k3-search" id="k3PeopleSearch" placeholder="Search by name or @username">
-    <div id="k3PeopleList"></div>
-  `;
-  const input = $s("#k3PeopleSearch");
-  const list = $s("#k3PeopleList");
 
-  const load = async () => {
-    const term = input.value.trim().replace(/^@/,"");
-    let query = supabaseSocial.from("profiles")
-      .select("id,display_name,username,bio,avatar_url")
-      .neq("id",socialUser.id)
-      .order("display_name")
-      .limit(50);
+/* =========================================================
+   DELETE POST
+========================================================= */
 
-    if (term) {
-      query = query.or(`display_name.ilike.%${term}%,username.ilike.%${term}%`);
+async function deletePost(
+  postId
+) {
+
+  if (!socialUser) {
+    return;
+  }
+
+  const confirmed =
+    window.confirm(
+      "Delete this post?"
+    );
+
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+
+    const {
+      error
+    } = await supabase
+      .from("posts")
+      .delete()
+      .eq(
+        "id",
+        postId
+      )
+      .eq(
+        "author_id",
+        socialUser.id
+      );
+
+    if (error) {
+      throw error;
     }
 
-    const { data, error } = await query;
-    if (error) throw error;
+    showSocialToast(
+      "Post deleted."
+    );
 
-    if (!data?.length) {
-      list.innerHTML = `<div class="k3-empty">No people found.</div>`;
+    await loadFeedPosts();
+
+  } catch (error) {
+
+    console.error(
+      "Keturio delete post:",
+      error
+    );
+
+    showSocialToast(
+      error.message ||
+      "Unable to delete post."
+    );
+
+  }
+}
+
+
+/* =========================================================
+   PEOPLE
+========================================================= */
+
+async function renderPeople(
+  container
+) {
+
+  container.innerHTML = `
+
+    <div class="ket-social-container">
+
+      <div class="ket-social-card">
+
+        <input
+          id="ketPeopleSearch"
+          class="ket-people-search"
+          type="search"
+          placeholder="Search people or @username…"
+          autocomplete="off"
+        >
+
+        <div id="ketPeopleList"></div>
+
+      </div>
+
+    </div>
+
+  `;
+
+  const search =
+    container.querySelector(
+      "#ketPeopleSearch"
+    );
+
+  search.value =
+    peopleSearchTerm;
+
+  search.addEventListener(
+    "input",
+    () => {
+
+      peopleSearchTerm =
+        search.value.trim()
+          .toLowerCase();
+
+      renderPeopleList();
+
+    }
+  );
+
+  await loadProfiles();
+
+  await renderPeopleList();
+}
+
+
+async function loadProfiles() {
+
+  const {
+    data,
+    error
+  } = await supabase
+    .from("profiles")
+    .select(`
+      id,
+      display_name,
+      username,
+      bio,
+      avatar_url
+    `)
+    .order(
+      "display_name",
+      {
+        ascending: true
+      }
+    )
+    .limit(100);
+
+  if (error) {
+
+    console.error(
+      "Keturio people:",
+      error
+    );
+
+    throw error;
+  }
+
+  socialProfiles =
+    data || [];
+
+  return socialProfiles;
+}
+
+
+async function renderPeopleList() {
+
+  const list =
+    socialRoot?.querySelector(
+      "#ketPeopleList"
+    );
+
+  if (!list) {
+    return;
+  }
+
+  let people =
+    socialProfiles.filter(
+      profile =>
+        profile.id !==
+        socialUser?.id
+    );
+
+  if (peopleSearchTerm) {
+
+    people =
+      people.filter(
+        profile => {
+
+          const name =
+            String(
+              profile.display_name ||
+              ""
+            ).toLowerCase();
+
+          const username =
+            String(
+              profile.username ||
+              ""
+            ).toLowerCase();
+
+          const bio =
+            String(
+              profile.bio ||
+              ""
+            ).toLowerCase();
+
+          return (
+            name.includes(
+              peopleSearchTerm
+            ) ||
+            username.includes(
+              peopleSearchTerm
+                .replace(
+                  /^@/,
+                  ""
+                )
+            ) ||
+            bio.includes(
+              peopleSearchTerm
+            )
+          );
+
+        }
+      );
+
+  }
+
+  if (!people.length) {
+
+    list.innerHTML = `
+
+      <div class="ket-empty">
+
+        <div class="emoji">
+          👥
+        </div>
+
+        <h3>
+          No people found
+        </h3>
+
+        <p>
+          Try another name or @username.
+        </p>
+
+      </div>
+
+    `;
+
+    return;
+  }
+
+  const {
+    data: followingRows
+  } = await supabase
+    .from("follows")
+    .select(`
+      following_id
+    `)
+    .eq(
+      "follower_id",
+      socialUser.id
+    );
+
+  const following =
+    new Set(
+      (followingRows || [])
+        .map(
+          row =>
+            row.following_id
+        )
+    );
+
+  list.innerHTML =
+    people.map(
+      profile => {
+
+        const isFollowing =
+          following.has(
+            profile.id
+          );
+
+        const name =
+          profile.display_name ||
+          "Keturio User";
+
+        return `
+
+          <div class="ket-person">
+
+            <div class="ket-avatar">
+
+              ${
+                profile.avatar_url
+                  ? `
+                    <img
+                      src="${escapeHtml(
+                        profile.avatar_url
+                      )}"
+                      alt=""
+                    >
+                  `
+                  : escapeHtml(
+                      initials(name)
+                    )
+              }
+
+            </div>
+
+            <div class="ket-person-info">
+
+              <strong>
+                ${escapeHtml(
+                  name
+                )}
+              </strong>
+
+              <span>
+                ${
+                  profile.username
+                    ? "@" +
+                      escapeHtml(
+                        profile.username
+                      )
+                    : "Keturio member"
+                }
+
+                ${
+                  profile.bio
+                    ? " · " +
+                      escapeHtml(
+                        profile.bio
+                      )
+                    : ""
+                }
+
+              </span>
+
+            </div>
+
+            <button
+              class="${
+                isFollowing
+                  ? "ket-social-secondary"
+                  : "ket-social-primary"
+              }"
+              data-follow-id="${escapeHtml(
+                profile.id
+              )}"
+              data-following="${
+                isFollowing
+              }"
+              type="button"
+            >
+              ${
+                isFollowing
+                  ? "Following"
+                  : "Connect"
+              }
+            </button>
+
+          </div>
+
+        `;
+
+      }
+    ).join("");
+
+  list
+    .querySelectorAll(
+      "[data-follow-id]"
+    )
+    .forEach(button => {
+
+      button.addEventListener(
+        "click",
+        async () => {
+
+          await toggleFollow(
+            button.dataset.followId,
+            button.dataset.following ===
+              "true"
+          );
+
+        }
+      );
+
+    });
+}
+
+
+/* =========================================================
+   FOLLOW / UNFOLLOW
+========================================================= */
+
+async function toggleFollow(
+  targetUserId,
+  currentlyFollowing
+) {
+
+  if (!socialUser) {
+    return;
+  }
+
+  if (
+    targetUserId ===
+    socialUser.id
+  ) {
+    return;
+  }
+
+  try {
+
+    if (
+      currentlyFollowing
+    ) {
+
+      const {
+        error
+      } = await supabase
+        .from("follows")
+        .delete()
+        .eq(
+          "follower_id",
+          socialUser.id
+        )
+        .eq(
+          "following_id",
+          targetUserId
+        );
+
+      if (error) {
+        throw error;
+      }
+
+      showSocialToast(
+        "Disconnected."
+      );
+
+    } else {
+
+      const {
+        error
+      } = await supabase
+        .from("follows")
+        .insert({
+          follower_id:
+            socialUser.id,
+          following_id:
+            targetUserId
+        });
+
+      if (error) {
+        throw error;
+      }
+
+      showSocialToast(
+        "Connected."
+      );
+
+    }
+
+    await loadProfiles();
+
+    await renderPeopleList();
+
+  } catch (error) {
+
+    console.error(
+      "Keturio follow:",
+      error
+    );
+
+    if (
+      error.code ===
+      "23505"
+    ) {
+
+      showSocialToast(
+        "You are already connected."
+      );
+
       return;
     }
 
-    await loadProfiles(data.map(p => p.id));
+    showSocialToast(
+      error.message ||
+      "Unable to update connection."
+    );
 
-    const followIds = data.map(p => p.id);
-    const { data: following } = await supabaseSocial
-      .from("follows").select("following_id")
-      .eq("follower_id",socialUser.id)
-      .in("following_id",followIds);
-
-    const followed = new Set((following || []).map(x => x.following_id));
-
-    list.innerHTML = data.map(p => `
-      <div class="k3-person">
-        <div class="k3-avatar">${initials(p.display_name || "K")}</div>
-        <div class="k3-person-copy">
-          <strong>${escapeHtml(p.display_name || "Keturio User")}</strong>
-          <span>${p.username ? "@"+escapeHtml(p.username) : "No Keturio ID"}${p.bio ? " · "+escapeHtml(p.bio.slice(0,70)) : ""}</span>
-        </div>
-        <button class="k3-action ${followed.has(p.id)?"active":""}" data-follow="${p.id}" data-following="${followed.has(p.id)}">${followed.has(p.id)?"Following":"Connect"}</button>
-      </div>
-    `).join("");
-
-    list.onclick = async (event) => {
-      const button = event.target.closest("[data-follow]");
-      if (!button) return;
-      const id = button.dataset.follow;
-      if (button.dataset.following === "true") {
-        const { error } = await supabaseSocial.from("follows").delete().eq("follower_id",socialUser.id).eq("following_id",id);
-        if (error) socialToast(error.message,true);
-      } else {
-        const { error } = await supabaseSocial.from("follows").insert({follower_id:socialUser.id,following_id:id});
-        if (error) socialToast(error.message,true);
-      }
-      load();
-    };
-  };
-
-  input.addEventListener("input", load);
-  await load();
-}
-
-async function renderMoments(content) {
-  content.innerHTML = `
-    <form class="k3-compose" id="k3MomentForm">
-      <textarea id="k3MomentText" maxlength="1000" placeholder="Share a moment…"></textarea>
-      <div class="k3-row">
-        <span class="k3-muted">Moments disappear after 24 hours</span>
-        <span class="k3-spacer"></span>
-        <button class="k3-primary" type="submit">Share</button>
-      </div>
-    </form>
-    <div id="k3MomentList"></div>
-  `;
-
-  $s("#k3MomentForm")?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const text = $s("#k3MomentText")?.value.trim();
-    if (!text) return;
-    const { error } = await supabaseSocial.from("moments").insert({author_id:socialUser.id,content:text});
-    if (error) socialToast(error.message,true);
-    else { socialToast("Moment shared."); renderSocial("moments"); }
-  });
-
-  const { data, error } = await supabaseSocial
-    .from("moments")
-    .select("id,author_id,content,created_at,expires_at")
-    .gt("expires_at", new Date().toISOString())
-    .order("created_at",{ascending:false})
-    .limit(50);
-
-  if (error) throw error;
-  await loadProfiles([...new Set((data || []).map(x => x.author_id))]);
-
-  const list = $s("#k3MomentList");
-  if (!data?.length) {
-    list.innerHTML = `<div class="k3-empty">No active moments yet.</div>`;
-    return;
   }
-
-  list.innerHTML = data.map(m => {
-    const p = socialProfiles.get(m.author_id) || {};
-    return `
-      <article class="k3-moment">
-        <div class="k3-user">
-          <div class="k3-avatar">${initials(p.display_name || "K")}</div>
-          <div><strong>${escapeHtml(p.display_name || "Keturio User")}</strong><span>${p.username ? "@"+escapeHtml(p.username)+" · " : ""}${timeAgo(m.created_at)}</span></div>
-        </div>
-        <div class="k3-body">${escapeHtml(m.content)}</div>
-      </article>
-    `;
-  }).join("");
 }
 
-async function renderProfile(content) {
-  const profile = await ensureProfile();
-  const { count: followers } = await supabaseSocial.from("follows").select("*",{count:"exact",head:true}).eq("following_id",socialUser.id);
-  const { count: following } = await supabaseSocial.from("follows").select("*",{count:"exact",head:true}).eq("follower_id",socialUser.id);
 
-  content.innerHTML = `
-    <div class="k3-profile">
-      <div class="k3-avatar">${initials(profile?.display_name || "K")}</div>
-      <h3>${escapeHtml(profile?.display_name || "Keturio User")}</h3>
-      <div class="k3-muted">${profile?.username ? "@"+escapeHtml(profile.username) : "Choose your Keturio ID"}</div>
-      <p>${escapeHtml(profile?.bio || "Add a short bio so people know you.")}</p>
-      <div class="k3-row" style="justify-content:center;gap:25px;margin:16px 0">
-        <span><strong>${followers || 0}</strong><small class="k3-muted"> followers</small></span>
-        <span><strong>${following || 0}</strong><small class="k3-muted"> following</small></span>
+/* =========================================================
+   MOMENTS
+========================================================= */
+
+async function renderMoments(
+  container
+) {
+
+  container.innerHTML = `
+
+    <div class="ket-social-container">
+
+      <div class="ket-social-card ket-social-composer">
+
+        <div class="ket-post-head">
+
+          <div class="ket-avatar">
+
+            ${escapeHtml(
+              initials(
+                socialProfile?.display_name ||
+                "Keturio"
+              )
+            )}
+
+          </div>
+
+          <div class="ket-post-author">
+
+            <strong>
+              Create a Moment
+            </strong>
+
+            <span>
+              Moments disappear after 24 hours.
+            </span>
+
+          </div>
+
+        </div>
+
+        <textarea
+          id="ketMomentInput"
+          maxlength="1000"
+          placeholder="Share a moment…"
+        ></textarea>
+
+        <div
+          class="ket-social-row"
+          style="margin-top:10px"
+        >
+
+          <span class="ket-social-space"></span>
+
+          <button
+            class="ket-social-primary"
+            id="ketCreateMoment"
+            type="button"
+          >
+            Share Moment
+          </button>
+
+        </div>
+
       </div>
 
-      <form class="k3-editor" id="k3ProfileForm">
-        <input id="k3Name" maxlength="60" value="${escapeHtml(profile?.display_name || "")}" placeholder="Display name">
-        <input id="k3Username" maxlength="30" value="${escapeHtml(profile?.username || "")}" placeholder="Keturio ID e.g. samuel_dio">
-        <textarea id="k3Bio" maxlength="160" placeholder="Short bio">${escapeHtml(profile?.bio || "")}</textarea>
-        <button class="k3-primary" type="submit">Save profile</button>
-      </form>
+      <div id="ketMomentList"></div>
+
     </div>
+
   `;
 
-  $s("#k3ProfileForm")?.addEventListener("submit", saveProfile);
+  container
+    .querySelector(
+      "#ketCreateMoment"
+    )
+    ?.addEventListener(
+      "click",
+      createMoment
+    );
+
+  await loadMoments();
 }
 
-async function saveProfile(event) {
-  event.preventDefault();
 
-  const display_name = $s("#k3Name")?.value.trim() || "Keturio User";
-  let username = ($s("#k3Username")?.value || "").trim().toLowerCase().replace(/^@/,"").replace(/[^a-z0-9_.]/g,"_");
-  const bio = ($s("#k3Bio")?.value || "").trim();
+async function loadMoments() {
 
-  if (username.length < 3) {
-    socialToast("Your Keturio ID must be at least 3 characters.", true);
+  const list =
+    socialRoot?.querySelector(
+      "#ketMomentList"
+    );
+
+  if (!list) {
     return;
   }
 
-  const { data: taken } = await supabaseSocial
-    .from("profiles").select("id").ilike("username",username).neq("id",socialUser.id).limit(1);
-
-  if (taken?.length) {
-    socialToast("@"+username+" is already taken.", true);
-    return;
-  }
-
-  const { error } = await supabaseSocial
-    .from("profiles")
-    .update({display_name,username,bio})
-    .eq("id",socialUser.id);
+  const {
+    data: moments,
+    error
+  } = await supabase
+    .from("moments")
+    .select(`
+      id,
+      author_id,
+      content,
+      image_url,
+      created_at,
+      expires_at
+    `)
+    .gt(
+      "expires_at",
+      new Date().toISOString()
+    )
+    .order(
+      "created_at",
+      {
+        ascending: false
+      }
+    )
+    .limit(100);
 
   if (error) {
-    socialToast(error.message,true);
+
+    console.error(
+      "Keturio moments:",
+      error
+    );
+
+    list.innerHTML = `
+
+      <div class="ket-empty">
+
+        <div class="emoji">
+          ⚠️
+        </div>
+
+        <h3>
+          Moments unavailable
+        </h3>
+
+        <p>
+          ${escapeHtml(
+            error.message
+          )}
+        </p>
+
+      </div>
+
+    `;
+
     return;
   }
 
-  await supabaseSocial.auth.updateUser({data:{display_name}});
-  await ensureProfile();
-  socialToast("Profile updated.");
-  renderSocial("profile");
-}
+  if (!moments?.length) {
 
-async function loadProfiles(ids) {
-  const missing = ids.filter(id => id && !socialProfiles.has(id));
-  if (!missing.length) return;
+    list.innerHTML = `
 
-  const { data, error } = await supabaseSocial
+      <div class="ket-empty">
+
+        <div class="emoji">
+          ✨
+        </div>
+
+        <h3>
+          No Moments yet
+        </h3>
+
+        <p>
+          Share the first Moment with your Keturio community.
+        </p>
+
+      </div>
+
+    `;
+
+    return;
+  }
+
+  const authorIds =
+    [
+      ...new Set(
+        moments.map(
+          moment =>
+            moment.author_id
+        )
+      )
+    ];
+
+  const {
+    data: profiles
+  } = await supabase
     .from("profiles")
-    .select("id,display_name,username,bio,avatar_url")
-    .in("id",missing);
+    .select(`
+      id,
+      display_name,
+      username,
+      avatar_url
+    `)
+    .in(
+      "id",
+      authorIds
+    );
 
-  if (error) throw error;
-  for (const p of data || []) socialProfiles.set(p.id,p);
+  const profileMap =
+    new Map(
+      (profiles || []).map(
+        profile => [
+          profile.id,
+          profile
+        ]
+      )
+    );
+
+  list.innerHTML =
+    moments.map(
+      moment => {
+
+        const author =
+          profileMap.get(
+            moment.author_id
+          ) || {};
+
+        const name =
+          author.display_name ||
+          "Keturio User";
+
+        const avatar =
+          author.avatar_url
+            ? `
+              <img
+                src="${escapeHtml(
+                  author.avatar_url
+                )}"
+                alt=""
+              >
+            `
+            : escapeHtml(
+                initials(name)
+              );
+
+        return `
+
+          <article
+            class="ket-moment"
+          >
+
+            <div class="ket-post-head">
+
+              <div class="ket-avatar">
+
+                ${avatar}
+
+              </div>
+
+              <div class="ket-post-author">
+
+                <strong>
+                  ${escapeHtml(
+                    name
+                  )}
+                </strong>
+
+                <span>
+                  ${
+                    author.username
+                      ? "@" +
+                        escapeHtml(
+                          author.username
+                        )
+                      : ""
+                  }
+                </span>
+
+              </div>
+
+            </div>
+
+            <div class="ket-moment-content">
+
+              ${escapeHtml(
+                moment.content
+              )}
+
+            </div>
+
+            <div class="ket-moment-time">
+
+              ${escapeHtml(
+                timeAgo(
+                  moment.created_at
+                )
+              )}
+
+              · expires
+              ${escapeHtml(
+                formatDate(
+                  moment.expires_at
+                )
+              )}
+
+            </div>
+
+          </article>
+
+        `;
+
+      }
+    ).join("");
 }
+
+
+/* =========================================================
+   CREATE MOMENT
+========================================================= */
+
+async function createMoment() {
+
+  if (!socialUser) {
+    return;
+  }
+
+  const input =
+    socialRoot?.querySelector(
+      "#ketMomentInput"
+    );
+
+  if (!input) {
+    return;
+  }
+
+  const content =
+    input.value.trim();
+
+  if (!content) {
+
+    showSocialToast(
+      "Write something first."
+    );
+
+    input.focus();
+
+    return;
+  }
+
+  if (content.length > 1000) {
+
+    showSocialToast(
+      "Your Moment is too long."
+    );
+
+    return;
+  }
+
+  const button =
+    socialRoot.querySelector(
+      "#ketCreateMoment"
+    );
+
+  if (button) {
+
+    button.disabled =
+      true;
+
+    button.textContent =
+      "Sharing…";
+
+  }
+
+  try {
+
+    const {
+      error
+    } = await supabase
+      .from("moments")
+      .insert({
+        author_id:
+          socialUser.id,
+        content
+      });
+
+    if (error) {
+      throw error;
+    }
+
+    input.value =
+      "";
+
+    showSocialToast(
+      "Moment shared."
+    );
+
+    await loadMoments();
+
+  } catch (error) {
+
+    console.error(
+      "Keturio create moment:",
+      error
+    );
+
+    showSocialToast(
+      error.message ||
+      "Unable to share Moment."
+    );
+
+  } finally {
+
+    if (button) {
+
+      button.disabled =
+        false;
+
+      button.textContent =
+        "Share Moment";
+
+    }
+
+  }
+}
+
+
+/* =========================================================
+   PROFILE
+========================================================= */
+
+async function renderProfile(
+  container
+) {
+
+  await ensureProfile();
+
+  if (!socialProfile) {
+
+    container.innerHTML = `
+
+      <div class="ket-empty">
+
+        <div class="emoji">
+          👤
+        </div>
+
+        <h3>
+          Profile unavailable
+        </h3>
+
+        <p>
+          We could not load your Keturio profile.
+        </p>
+
+      </div>
+
+    `;
+
+    return;
+  }
+
+  const {
+    count: followersCount
+  } = await supabase
+    .from("follows")
+    .select(
+      "*",
+      {
+        count: "exact",
+        head: true
+      }
+    )
+    .eq(
+      "following_id",
+      socialUser.id
+    );
+
+  const {
+    count: followingCount
+  } = await supabase
+    .from("follows")
+    .select(
+      "*",
+      {
+        count: "exact",
+        head: true
+      }
+    )
+    .eq(
+      "follower_id",
+      socialUser.id
+    );
+
+  container.innerHTML = `
+
+    <div class="ket-social-container">
+
+      <div class="ket-social-card">
+
+        <div class="ket-profile-hero">
+
+          <div class="ket-profile-avatar">
+
+            ${
+              socialProfile.avatar_url
+                ? `
+                  <img
+                    src="${escapeHtml(
+                      socialProfile.avatar_url
+                    )}"
+                    alt=""
+                  >
+                `
+                : escapeHtml(
+                    initials(
+                      socialProfile.display_name ||
+                      "Keturio"
+                    )
+                  )
+            }
+
+          </div>
+
+          <h2>
+            ${escapeHtml(
+              socialProfile.display_name ||
+              "Keturio User"
+            )}
+          </h2>
+
+          <div class="ket-profile-username">
+
+            ${
+              socialProfile.username
+                ? "@" +
+                  escapeHtml(
+                    socialProfile.username
+                  )
+                : "Set your @username"
+            }
+
+          </div>
+
+          <div class="ket-profile-bio">
+
+            ${
+              socialProfile.bio
+                ? escapeHtml(
+                    socialProfile.bio
+                  )
+                : "Add a short bio so people know you."
+            }
+
+          </div>
+
+          <div class="ket-profile-stats">
+
+            <div class="ket-profile-stat">
+
+              <strong>
+                ${followersCount || 0}
+              </strong>
+
+              <span>
+                Followers
+              </span>
+
+            </div>
+
+            <div class="ket-profile-stat">
+
+              <strong>
+                ${followingCount || 0}
+              </strong>
+
+              <span>
+                Following
+              </span>
+
+            </div>
+
+          </div>
+
+        </div>
+
+
+        <div class="ket-social-row">
+
+          <button
+            class="ket-social-primary"
+            id="ketEditProfile"
+            type="button"
+          >
+            Edit Profile
+          </button>
+
+        </div>
+
+      </div>
+
+
+      <div
+        class="ket-social-card hidden"
+        id="ketProfileEditor"
+      >
+
+        <h3>
+          Edit your Keturio profile
+        </h3>
+
+        <label class="ket-field">
+
+          <span>
+            Display name
+          </span>
+
+          <input
+            id="ketProfileName"
+            maxlength="60"
+            value="${escapeHtml(
+              socialProfile.display_name ||
+              ""
+            )}"
+          >
+
+        </label>
+
+        <label class="ket-field">
+
+          <span>
+            Keturio ID / @username
+          </span>
+
+          <input
+            id="ketProfileUsername"
+            maxlength="30"
+            placeholder="yourusername"
+            value="${escapeHtml(
+              socialProfile.username ||
+              ""
+            )}"
+          >
+
+        </label>
+
+        <label class="ket-field">
+
+          <span>
+            Bio
+          </span>
+
+          <textarea
+            id="ketProfileBio"
+            maxlength="500"
+            placeholder="Tell people about yourself…"
+          >${escapeHtml(
+            socialProfile.bio ||
+            ""
+          )}</textarea>
+
+        </label>
+
+        <div class="ket-social-row">
+
+          <button
+            class="ket-social-secondary"
+            id="ketCancelProfile"
+            type="button"
+          >
+            Cancel
+          </button>
+
+          <span class="ket-social-space"></span>
+
+          <button
+            class="ket-social-primary"
+            id="ketSaveProfile"
+            type="button"
+          >
+            Save Profile
+          </button>
+
+        </div>
+
+      </div>
+
+    </div>
+
+  `;
+
+  container
+    .querySelector(
+      "#ketEditProfile"
+    )
+    ?.addEventListener(
+      "click",
+      () => {
+
+        container
+          .querySelector(
+            "#ketProfileEditor"
+          )
+          ?.classList.remove(
+            "hidden"
+          );
+
+      }
+    );
+
+  container
+    .querySelector(
+      "#ketCancelProfile"
+    )
+    ?.addEventListener(
+      "click",
+      () => {
+
+        container
+          .querySelector(
+            "#ketProfileEditor"
+          )
+          ?.classList.add(
+            "hidden"
+          );
+
+      }
+    );
+
+  container
+    .querySelector(
+      "#ketSaveProfile"
+    )
+    ?.addEventListener(
+      "click",
+      saveProfile
+    );
+}
+
+
+/* =========================================================
+   SAVE PROFILE
+========================================================= */
+
+async function saveProfile() {
+
+  if (!socialUser) {
+    return;
+  }
+
+  const nameInput =
+    socialRoot.querySelector(
+      "#ketProfileName"
+    );
+
+  const usernameInput =
+    socialRoot.querySelector(
+      "#ketProfileUsername"
+    );
+
+  const bioInput =
+    socialRoot.querySelector(
+      "#ketProfileBio"
+    );
+
+  if (
+    !nameInput ||
+    !usernameInput ||
+    !bioInput
+  ) {
+    return;
+  }
+
+  const displayName =
+    nameInput.value.trim();
+
+  let username =
+    usernameInput.value
+      .trim()
+      .toLowerCase();
+
+  const bio =
+    bioInput.value.trim();
+
+  username =
+    username
+      .replace(
+        /^@/,
+        ""
+      )
+      .replace(
+        /[^a-z0-9_.]/g,
+        ""
+      );
+
+  if (!displayName) {
+
+    showSocialToast(
+      "Please enter a display name."
+    );
+
+    return;
+  }
+
+  if (
+    username &&
+    username.length < 3
+  ) {
+
+    showSocialToast(
+      "Username must contain at least 3 characters."
+    );
+
+    return;
+  }
+
+  const saveButton =
+    socialRoot.querySelector(
+      "#ketSaveProfile"
+    );
+
+  if (saveButton) {
+
+    saveButton.disabled =
+      true;
+
+    saveButton.textContent =
+      "Saving…";
+
+  }
+
+  try {
+
+    if (username) {
+
+      const {
+        data: existing,
+        error: usernameError
+      } = await supabase
+        .from("profiles")
+        .select("id")
+        .eq(
+          "username",
+          username
+        )
+        .neq(
+          "id",
+          socialUser.id
+        )
+        .maybeSingle();
+
+      if (usernameError) {
+        throw usernameError;
+      }
+
+      if (existing) {
+
+        showSocialToast(
+          "That @username is already taken."
+        );
+
+        return;
+      }
+
+    }
+
+    const {
+      data,
+      error
+    } = await supabase
+      .from("profiles")
+      .update({
+        display_name:
+          displayName,
+        username:
+          username || null,
+        bio
+      })
+      .eq(
+        "id",
+        socialUser.id
+      )
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    socialProfile =
+      data;
+
+    try {
+
+      await supabase.auth.updateUser({
+        data: {
+          display_name:
+            displayName,
+          username:
+            username || null
+        }
+      });
+
+    } catch (metadataError) {
+
+      console.warn(
+        "Keturio auth metadata update:",
+        metadataError
+      );
+
+    }
+
+    showSocialToast(
+      "Profile updated."
+    );
+
+    await renderProfile(
+      socialRoot.querySelector(
+        "#ketSocialContent"
+      )
+    );
+
+  } catch (error) {
+
+    console.error(
+      "Keturio save profile:",
+      error
+    );
+
+    if (
+      error.code ===
+      "23505"
+    ) {
+
+      showSocialToast(
+        "That @username is already taken."
+      );
+
+    } else {
+
+      showSocialToast(
+        error.message ||
+        "Unable to save profile."
+      );
+
+    }
+
+  } finally {
+
+    if (saveButton) {
+
+      saveButton.disabled =
+        false;
+
+      saveButton.textContent =
+        "Save Profile";
+
+    }
+
+  }
+}
+
+
+/* =========================================================
+   PROFILE BAR → OPEN PROFILE
+========================================================= */
+
+function connectExistingProfileBar() {
+
+  const profileBar =
+    document.querySelector(
+      ".profile-bar"
+    );
+
+  if (!profileBar) {
+    return;
+  }
+
+  if (
+    profileBar.dataset.keturioSocialBound ===
+    "true"
+  ) {
+    return;
+  }
+
+  profileBar.dataset.keturioSocialBound =
+    "true";
+
+  profileBar.addEventListener(
+    "click",
+    event => {
+
+      if (
+        event.target.closest(
+          "#logoutBtn"
+        )
+      ) {
+        return;
+      }
+
+      openSocial(
+        "profile"
+      );
+
+    }
+  );
+}
+
+
+/* =========================================================
+   SOCIAL NAVIGATION
+========================================================= */
+
+function createSocialNavigation() {
+
+  const bottomNav =
+    document.querySelector(
+      ".bottom-nav"
+    );
+
+  if (!bottomNav) {
+    return;
+  }
+
+  /*
+   * Do not duplicate the navigation.
+   */
+
+  if (
+    document.getElementById(
+      "keturioSocialNav"
+    )
+  ) {
+    return;
+  }
+
+  const button =
+    document.createElement(
+      "button"
+    );
+
+  button.id =
+    "keturioSocialNav";
+
+  button.className =
+    "nav-item";
+
+  button.type =
+    "button";
+
+  button.innerHTML = `
+    🌐
+    <span>
+      Social
+    </span>
+  `;
+
+  button.addEventListener(
+    "click",
+    () => {
+      openSocial(
+        "feed"
+      );
+    }
+  );
+
+  bottomNav.appendChild(
+    button
+  );
+}
+
+
+/* =========================================================
+   AUTH STATE
+========================================================= */
+
+supabase.auth.onAuthStateChange(
+  async (
+    event,
+    session
+  ) => {
+
+    socialUser =
+      session?.user ||
+      null;
+
+    if (
+      socialUser
+    ) {
+
+      await ensureProfile();
+
+      connectExistingProfileBar();
+
+      createSocialNavigation();
+
+    }
+
+  }
+);
+
+
+/* =========================================================
+   BOOT
+========================================================= */
 
 async function bootSocial() {
-  try {
-    await getMe();
-    if (!socialUser) return;
-    injectSocialStyles();
-    injectSocialBar();
-    injectSocialView();
-  } catch (error) {
-    console.warn("Keturio Stage 3 could not initialize:", error);
+
+  if (
+    socialInitialized
+  ) {
+    return;
   }
+
+  socialInitialized =
+    true;
+
+  createSocialRoot();
+
+  await getMe();
+
+  if (socialUser) {
+
+    await ensureProfile();
+
+    connectExistingProfileBar();
+
+    createSocialNavigation();
+
+  }
+
 }
 
-supabaseSocial.auth.onAuthStateChange((_event, session) => {
-  if (session?.user) {
-    socialUser = session.user;
-    setTimeout(bootSocial, 0);
-  }
-});
 
-bootSocial();
+/* =========================================================
+   WAIT FOR APP
+========================================================= */
+
+if (
+  document.readyState ===
+  "loading"
+) {
+
+  document.addEventListener(
+    "DOMContentLoaded",
+    bootSocial
+  );
+
+} else {
+
+  bootSocial();
+
+}
+
+
+/* =========================================================
+   EXPORT OPTIONAL GLOBAL API
+========================================================= */
+
+window.KeturioSocial = {
+
+  open: openSocial,
+
+  close: closeSocial,
+
+  openFeed: () =>
+    openSocial("feed"),
+
+  openPeople: () =>
+    openSocial("people"),
+
+  openMoments: () =>
+    openSocial("moments"),
+
+  openProfile: () =>
+    openSocial("profile")
+
+};
