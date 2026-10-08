@@ -3587,64 +3587,18 @@ function connectExistingProfileBar() {
 
 /* =========================================================
    SOCIAL NAVIGATION
+   ---------------------------------------------------------
+   IMPORTANT:
+   The Social button is already present in index.html.
+   This function intentionally does NOTHING so that
+   social.js does not create a second Social button.
 ========================================================= */
 
 function createSocialNavigation() {
 
-  const bottomNav =
-    document.querySelector(
-      ".bottom-nav"
-    );
-
-  if (!bottomNav) {
-    return;
-  }
-
-  /*
-   * Do not duplicate the navigation.
-   */
-
-  if (
-    document.getElementById(
-      "keturioSocialNav"
-    )
-  ) {
-    return;
-  }
-
-  const button =
-    document.createElement(
-      "button"
-    );
-
-  button.id =
-    "keturioSocialNav";
-
-  button.className =
-    "nav-item";
-
-  button.type =
-    "button";
-
-  button.innerHTML = `
-    🌐
-    <span>
-      Social
-    </span>
-  `;
-
-  button.addEventListener(
-    "click",
-    () => {
-      openSocial(
-        "feed"
-      );
-    }
-  );
-
-  bottomNav.appendChild(
-    button
-  );
+  // Social navigation is already provided by index.html.
+  // Do not create another button here.
+  return;
 }
 
 
@@ -3669,6 +3623,11 @@ supabase.auth.onAuthStateChange(
       await ensureProfile();
 
       connectExistingProfileBar();
+
+      /*
+       * Do NOT create another Social button here.
+       * index.html already provides it.
+       */
 
       createSocialNavigation();
 
@@ -3702,6 +3661,11 @@ async function bootSocial() {
     await ensureProfile();
 
     connectExistingProfileBar();
+
+    /*
+     * The Social button already exists in index.html.
+     * createSocialNavigation() intentionally does nothing.
+     */
 
     createSocialNavigation();
 
