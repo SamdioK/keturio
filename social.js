@@ -867,6 +867,25 @@ function injectSocialStyles() {
 
   `;
 
+  style.textContent += `
+    .ket-post-extra-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; padding-top:10px; border-top:1px solid var(--line,rgba(255,255,255,.08)); }
+    .ket-post-extra-actions button, .ket-comment-actions button { border:0; border-radius:10px; padding:8px 10px; background:rgba(255,255,255,.055); color:var(--text,#f4f7ff); cursor:pointer; }
+    .ket-post-extra-actions button.active { color:var(--accent,#8ab4ff); background:rgba(100,150,255,.13); }
+    .ket-comments-panel { margin-top:12px; padding-top:12px; border-top:1px solid var(--line,rgba(255,255,255,.08)); }
+    .ket-comment-form { display:flex; gap:8px; margin-bottom:12px; }
+    .ket-comment-form input { min-width:0; flex:1; border:1px solid var(--line,rgba(255,255,255,.12)); border-radius:12px; padding:10px 12px; background:var(--panel2,#0c111c); color:var(--text,#fff); }
+    .ket-comment-form button { border:0; border-radius:10px; padding:8px 12px; background:var(--accent,#477cff); color:white; cursor:pointer; }
+    .ket-comment { padding:10px 0; border-bottom:1px solid var(--line,rgba(255,255,255,.07)); }
+    .ket-comment strong { font-size:13px; }
+    .ket-comment p { margin:5px 0; white-space:pre-wrap; overflow-wrap:anywhere; }
+    .ket-comment-meta { color:var(--muted,#8d9bb8); font-size:11px; }
+    .ket-unread-badge { display:inline-block; min-width:17px; margin-left:4px; border-radius:999px; padding:2px 5px; background:#e5484d; color:white; font-size:10px; }
+    .ket-notification { display:flex; gap:10px; align-items:flex-start; padding:13px; border-bottom:1px solid var(--line,rgba(255,255,255,.07)); cursor:pointer; }
+    .ket-notification.unread { background:rgba(85,135,255,.09); }
+    .ket-notification p { margin:0; }
+    .ket-notification small { display:block; margin-top:5px; color:var(--muted,#8d9bb8); }
+  `;
+
   document.head.appendChild(
     style
   );
@@ -978,6 +997,14 @@ function createSocialRoot() {
           type="button"
         >
           ✨ Moments
+        </button>
+
+        <button
+          class="ket-social-tab"
+          data-social-tab="notifications"
+          type="button"
+        >
+          🔔 Notifications <span id="ketSocialUnreadBadge" class="ket-unread-badge" hidden></span>
         </button>
 
         <button
@@ -1133,6 +1160,7 @@ async function openSocial(
   await renderSocial(
     activeSocialTab
   );
+  await updateUnreadNotificationsBadge();
 }
 
 
@@ -1243,6 +1271,10 @@ async function renderSocial(
 
     else if (tab === "profile") {
       await renderProfile(content);
+    }
+
+    else if (tab === "notifications") {
+      await renderNotifications(content);
     }
 
   } catch (error) {
@@ -1572,6 +1604,23 @@ async function loadFeedPosts() {
 
   }
 
+  const { data: commentsForCounts } = await supabase
+    .from("post_comments")
+    .select("id, post_id")
+    .in("post_id", postIds);
+
+  const commentCounts = new Map();
+  for (const comment of commentsForCounts || []) {
+    commentCounts.set(comment.post_id, (commentCounts.get(comment.post_id) || 0) + 1);
+  }
+
+  const { data: savedRows } = await supabase
+    .from("post_saves")
+    .select("post_id")
+    .eq("user_id", socialUser.id)
+    .in("post_id", postIds);
+  const savedPostIds = new Set((savedRows || []).map(row => row.post_id));
+
   list.innerHTML =
     posts.map(
       post => {
@@ -1589,7 +1638,9 @@ async function loadFeedPosts() {
         return renderPost(
           post,
           author,
-          postReactions
+          postReactions,
+          commentCounts.get(post.id) || 0,
+          savedPostIds.has(post.id)
         );
 
       }
@@ -1608,7 +1659,9 @@ async function loadFeedPosts() {
 function renderPost(
   post,
   author,
-  reactions
+  reactions,
+  commentCount = 0,
+  isSaved = false
 ) {
 
   const displayName =
@@ -1791,6 +1844,15 @@ function renderPost(
 
       </div>
 
+      <div class="ket-post-extra-actions">
+        <button type="button" data-post-action="comments">💬 Comments${commentCount ? ` (${commentCount})` : ""}</button>
+        <button type="button" data-post-action="save" class="${isSaved ? "active" : ""}">${isSaved ? "🔖 Saved" : "🔖 Save"}</button>
+        <button type="button" data-post-action="share">↗ Share</button>
+        <button type="button" data-post-action="repost">🔁 Repost</button>
+        <button type="button" data-post-action="quote">✍️ Quote</button>
+      </div>
+      <div class="ket-comments-panel" hidden></div>
+
     </article>
 
   `;
@@ -1963,10 +2025,186 @@ function bindPostActions(
 
           }
 
+          if (action === "comments") {
+            const panel = post.querySelector(".ket-comments-panel");
+            if (panel) {
+              const shouldOpen = panel.hidden;
+              panel.hidden = !shouldOpen;
+              if (shouldOpen) await loadPostComments(postId, panel);
+            }
+          }
+
+          if (action === "save") await toggleSavedPost(postId, button);
+          if (action === "share") await sharePost(postId, "share");
+          if (action === "repost") await sharePost(postId, "repost");
+          if (action === "quote") await sharePost(postId, "quote");
+
         }
       );
 
     });
+}
+
+
+/* =========================================================
+   COMMENTS, SAVES, SHARING, NOTIFICATIONS
+========================================================= */
+
+async function loadPostComments(postId, panel) {
+  panel.innerHTML = `<div class="ket-comment-meta">Loading comments…</div>`;
+  const { data: comments, error } = await supabase
+    .from("post_comments")
+    .select("id, post_id, author_id, parent_comment_id, content, created_at")
+    .eq("post_id", postId)
+    .order("created_at", { ascending: true })
+    .limit(100);
+  if (error) {
+    panel.innerHTML = `<p class="ket-comment-meta">${escapeHtml(error.message || "Unable to load comments. Run Stage 4 SQL first.")}</p>`;
+    return;
+  }
+  const ids = [...new Set((comments || []).map(c => c.author_id))];
+  let profiles = [];
+  if (ids.length) {
+    const result = await supabase.from("profiles").select("id, display_name, username, avatar_url").in("id", ids);
+    profiles = result.data || [];
+  }
+  const profileMap = new Map(profiles.map(profile => [profile.id, profile]));
+  const commentIds = (comments || []).map(c => c.id);
+  let commentReactions = [];
+  if (commentIds.length) {
+    const reactionResult = await supabase.from("comment_reactions").select("comment_id, user_id, reaction").in("comment_id", commentIds);
+    commentReactions = reactionResult.data || [];
+  }
+  const reactionMap = new Map();
+  for (const reaction of commentReactions) {
+    if (!reactionMap.has(reaction.comment_id)) reactionMap.set(reaction.comment_id, []);
+    reactionMap.get(reaction.comment_id).push(reaction);
+  }
+  panel.innerHTML = `
+    <form class="ket-comment-form" data-comment-form>
+      <input name="content" maxlength="2000" placeholder="Write a comment…" aria-label="Write a comment" required>
+      <button type="submit">Send</button>
+    </form>
+    <div class="ket-comments-list">
+      ${(comments || []).map(comment => {
+        const author = profileMap.get(comment.author_id) || {};
+        const reactions = reactionMap.get(comment.id) || [];
+        const mine = reactions.some(r => r.user_id === socialUser?.id);
+        return `<div class="ket-comment" data-comment-id="${escapeHtml(comment.id)}"><strong>${escapeHtml(author.display_name || author.username || "Keturio User")}</strong><p>${escapeHtml(comment.content)}</p><span class="ket-comment-meta">${escapeHtml(timeAgo(comment.created_at))}</span> <span class="ket-comment-actions"><button type="button" data-comment-react="like" class="${mine ? "active" : ""}">👍 ${reactions.length || ""}</button></span></div>`;
+      }).join("") || `<p class="ket-comment-meta">No comments yet. Start the conversation.</p>`}
+    </div>`;
+  panel.querySelectorAll("[data-comment-react]").forEach(button => {
+    button.addEventListener("click", async () => {
+      const commentEl = button.closest("[data-comment-id]");
+      const commentId = commentEl?.dataset.commentId;
+      if (!commentId || !socialUser) return;
+      const { data: existing, error: lookupError } = await supabase.from("comment_reactions").select("comment_id").eq("comment_id", commentId).eq("user_id", socialUser.id).maybeSingle();
+      if (lookupError) return showSocialToast(lookupError.message || "Unable to react to comment.");
+      if (existing) {
+        const { error } = await supabase.from("comment_reactions").delete().eq("comment_id", commentId).eq("user_id", socialUser.id);
+        if (error) return showSocialToast(error.message);
+      } else {
+        const { error } = await supabase.from("comment_reactions").insert({ comment_id: commentId, user_id: socialUser.id, reaction: "like" });
+        if (error) return showSocialToast(error.message || "Unable to react. Run Stage 4 SQL first.");
+      }
+      await loadPostComments(postId, panel);
+    });
+  });
+  const form = panel.querySelector("[data-comment-form]");
+  form?.addEventListener("submit", async event => {
+    event.preventDefault();
+    if (!socialUser) return showSocialToast("Please log in first.");
+    const input = form.elements.content;
+    const content = input.value.trim();
+    if (!content) return;
+    const submit = form.querySelector("button");
+    submit.disabled = true;
+    const { error: insertError } = await supabase.from("post_comments").insert({ post_id: postId, author_id: socialUser.id, content });
+    submit.disabled = false;
+    if (insertError) {
+      showSocialToast(insertError.message || "Unable to add comment. Run Stage 4 SQL first.");
+      return;
+    }
+    await loadPostComments(postId, panel);
+    const actionButton = socialRoot?.querySelector(`[data-post-id="${CSS.escape(postId)}"] [data-post-action="comments"]`);
+    if (actionButton) actionButton.textContent = `💬 Comments (${panel.querySelectorAll(".ket-comment").length})`;
+  });
+}
+
+async function toggleSavedPost(postId, button) {
+  if (!socialUser) return showSocialToast("Please log in first.");
+  const { data: existing, error: findError } = await supabase.from("post_saves").select("post_id").eq("post_id", postId).eq("user_id", socialUser.id).maybeSingle();
+  if (findError) return showSocialToast(findError.message || "Unable to check saved posts.");
+  if (existing) {
+    const { error } = await supabase.from("post_saves").delete().eq("post_id", postId).eq("user_id", socialUser.id);
+    if (error) return showSocialToast(error.message);
+    button.classList.remove("active"); button.textContent = "🔖 Save";
+    showSocialToast("Post removed from saved posts.");
+  } else {
+    const { error } = await supabase.from("post_saves").insert({ post_id: postId, user_id: socialUser.id });
+    if (error) return showSocialToast(error.message || "Unable to save post. Run Stage 4 SQL first.");
+    button.classList.add("active"); button.textContent = "🔖 Saved";
+    showSocialToast("Post saved.");
+  }
+}
+
+async function sharePost(postId, shareType) {
+  if (!socialUser) return showSocialToast("Please log in first.");
+  let message = null;
+  if (shareType === "quote") {
+    message = window.prompt("Add your thoughts to this quote (optional):", "");
+    if (message === null) return;
+    message = message.trim();
+    if (message.length > 2000) return showSocialToast("Your quote is too long.");
+  }
+  if (shareType === "repost") {
+    const confirmed = window.confirm("Repost this to your followers?");
+    if (!confirmed) return;
+  }
+  const { error } = await supabase.from("post_shares").insert({ post_id: postId, user_id: socialUser.id, share_type: shareType, message });
+  if (error) {
+    if (error.code === "23505") return showSocialToast("You have already reposted this post.");
+    return showSocialToast(error.message || "Unable to share. Run Stage 4 SQL first.");
+  }
+  if (shareType === "share") {
+    const postUrl = `${location.origin}${location.pathname}#post-${postId}`;
+    try {
+      if (navigator.share) await navigator.share({ title: "Keturio post", url: postUrl });
+      else if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(postUrl); showSocialToast("Post link copied."); }
+      else window.prompt("Copy this post link:", postUrl);
+    } catch (e) { if (e?.name !== "AbortError") showSocialToast("Share recorded."); }
+  } else {
+    showSocialToast(shareType === "repost" ? "Reposted successfully." : "Quote recorded.");
+  }
+}
+
+async function updateUnreadNotificationsBadge() {
+  if (!socialUser || !socialRoot) return;
+  const { count, error } = await supabase.from("notifications").select("id", { count: "exact", head: true }).eq("recipient_id", socialUser.id).eq("is_read", false);
+  if (error) return;
+  const badge = socialRoot.querySelector("#ketSocialUnreadBadge");
+  if (badge) { badge.hidden = !count; badge.textContent = count > 99 ? "99+" : String(count || ""); }
+}
+
+async function renderNotifications(container) {
+  container.innerHTML = `<div class="ket-social-container"><div class="ket-social-card"><h2>Notifications</h2><p class="ket-comment-meta">Your latest follows, reactions, comments and shares.</p><div id="ketNotificationsList">Loading notifications…</div></div></div>`;
+  const list = container.querySelector("#ketNotificationsList");
+  const { data: notifications, error } = await supabase.from("notifications").select("id, actor_id, notification_type, post_id, comment_id, message, is_read, created_at").eq("recipient_id", socialUser.id).order("created_at", { ascending: false }).limit(100);
+  if (error) { list.innerHTML = `<p class="ket-comment-meta">${escapeHtml(error.message || "Unable to load notifications. Run Stage 4 SQL first.")}</p>`; return; }
+  const actorIds = [...new Set((notifications || []).map(n => n.actor_id).filter(Boolean))];
+  let profiles = [];
+  if (actorIds.length) { const result = await supabase.from("profiles").select("id, display_name, username").in("id", actorIds); profiles = result.data || []; }
+  const profileMap = new Map(profiles.map(p => [p.id, p]));
+  const labels = { follow: "started following you", post_reaction: "reacted to your post", comment: "commented on your post", comment_reply: "replied to your comment", comment_reaction: "reacted to your comment", repost: "reposted your post", quote_post: "quoted your post", post_share: "shared your post" };
+  list.innerHTML = (notifications || []).map(n => {
+    const actor = profileMap.get(n.actor_id) || {};
+    return `<div class="ket-notification ${n.is_read ? "" : "unread"}" data-notification-id="${escapeHtml(n.id)}"><div>🔔</div><div><p><strong>${escapeHtml(actor.display_name || actor.username || "A Keturio user")}</strong> ${escapeHtml(labels[n.notification_type] || "interacted with you")}${n.message ? `: ${escapeHtml(n.message)}` : ""}</p><small>${escapeHtml(timeAgo(n.created_at))}</small></div></div>`;
+  }).join("") || `<div class="ket-empty"><div class="emoji">🔔</div><h3>You're all caught up</h3><p>New activity will appear here.</p></div>`;
+  const unreadIds = (notifications || []).filter(n => !n.is_read).map(n => n.id);
+  if (unreadIds.length) {
+    const { error: markError } = await supabase.from("notifications").update({ is_read: true }).in("id", unreadIds).eq("recipient_id", socialUser.id);
+    if (!markError) { list.querySelectorAll(".ket-notification.unread").forEach(el => el.classList.remove("unread")); await updateUnreadNotificationsBadge(); }
+  }
 }
 
 
@@ -3715,6 +3953,9 @@ window.KeturioSocial = {
     openSocial("moments"),
 
   openProfile: () =>
-    openSocial("profile")
+    openSocial("profile"),
+
+  openNotifications: () =>
+    openSocial("notifications")
 
 };
